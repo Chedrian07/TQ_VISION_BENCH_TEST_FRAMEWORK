@@ -37,6 +37,18 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--overwrite", action="store_true")
     prepare_parser.set_defaults(command="prepare-datasets")
 
+    precompute_parser = subparsers.add_parser(
+        "precompute-vision",
+        help="Warm the backend's vision feature cache by sending one tiny request per sample",
+    )
+    precompute_parser.add_argument("--benchmarks", default="all")
+    precompute_parser.add_argument("--benchmark", action="append", default=[])
+    precompute_parser.add_argument("--num", type=int, default=None, help="Per-benchmark sample cap")
+    precompute_parser.add_argument("--seed", type=int, default=7)
+    precompute_parser.add_argument("--dataset-file", action="append", default=[])
+    precompute_parser.add_argument("--log-level", default="INFO")
+    precompute_parser.set_defaults(command="precompute-vision")
+
     run_parser = subparsers.add_parser("run", help="Run selected benchmarks")
     run_parser.add_argument("--benchmarks", default="all", help="Comma-separated benchmark ids or 'all'")
     run_parser.add_argument("--benchmark", action="append", default=[], help="Repeatable benchmark selector")
@@ -58,6 +70,15 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--resume-run-id", default=None, help="Resume into an existing run id under results/runs/<run_id>")
     run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help=(
+            "Bypass the HTTP backend and run oMLX directly in-process. "
+            "Faster (no HTTP/SSE serialization) but cannot share state "
+            "with an external server. The TQ_BACKEND server is not used."
+        ),
+    )
     run_parser.add_argument("--log-level", default="INFO")
 
     return parser
@@ -106,6 +127,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"{benchmark_id}: prepared -> {path}")
         return 0
+    if args.command == "precompute-vision":
+        from tq_bench_framework.runner import precompute_vision_cache
+
+        return precompute_vision_cache(
+            benchmark_ids=[item for item in [args.benchmarks, *args.benchmark] if item],
+            num_limit=args.num,
+            seed=args.seed,
+            dataset_file_overrides=list(args.dataset_file),
+        )
 
     options = RunOptions(
         benchmark_ids=[item for item in [args.benchmarks, *args.benchmark] if item],
@@ -127,6 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_output_tokens_override=args.max_output_tokens,
         dry_run=args.dry_run,
         resume_run_id=args.resume_run_id,
+        in_process=args.in_process,
     )
     return execute_run(options)
 

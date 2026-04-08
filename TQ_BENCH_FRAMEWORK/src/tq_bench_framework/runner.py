@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from tq_bench_framework.reporting import (
     SummaryAccumulator,
     finalize_cell_summary,
 )
-from tq_bench_framework.runtime_client import BackendClient
+from tq_bench_framework.runtime_client import BackendClient, make_backend_client
 from tq_bench_framework.schema import (
     BenchmarkManifest,
     RunMetadata,
@@ -53,6 +54,7 @@ class RunOptions:
     max_output_tokens_override: int | None
     dry_run: bool
     resume_run_id: str | None
+    in_process: bool = False
 
 
 def parse_benchmark_selection(
@@ -372,7 +374,9 @@ def execute_run(options: RunOptions) -> int:
         )
         return 0
 
-    client = BackendClient(settings)
+    client = make_backend_client(settings, in_process=options.in_process)
+    if options.in_process:
+        log.info("Embedded oMLX runtime active (HTTP backend bypassed)")
     executor = ThreadPoolExecutor(max_workers=settings.max_parallel_requests)
     try:
         runtime_groups: dict[tuple[str, str | None, float | None], list[tuple[BenchmarkManifest, RuntimeConfig]]] = defaultdict(list)
@@ -521,3 +525,114 @@ def print_benchmark_list() -> None:
             f"{benchmark.id:14} stage={benchmark.stage:13} metric={benchmark.metric:24} "
             f"default={benchmark.default_sampling_profile:10} best_effort={benchmark.best_effort_sampling_profile}"
         )
+
+
+def precompute_vision_cache(
+    *,
+    benchmark_ids: list[str],
+    num_limit: int | None,
+    seed: int,
+    dataset_file_overrides: list[str],
+) -> int:
+    """Warm the backend's ``VisionFeatureSSDCache`` for selected samples.
+
+    Iterates the (benchmark, sample) plan once and sends a tiny
+    ``max_output_tokens=1`` request per sample. The vision encoder runs
+    once per unique image and the resulting features land in
+    ``<TQ_OMLX_CACHE_DIR>/vision_features``. Subsequent ``tq-bench run``
+    invocations (across runtime reloads, across processes) become cache
+    hits and skip the vision tower entirely.
+
+    The function intentionally does NOT touch the runtime config -
+    whatever the backend currently has loaded is fine because the
+    vision tower path is independent of the language-model KV quant
+    scheme. Returns shell exit code (0 on success).
+    """
+    settings = load_framework_settings()
+    registry = load_benchmark_registry()
+    selected_ids = parse_benchmark_selection(
+        registry,
+        benchmark_csv=",".join(benchmark_ids) if benchmark_ids else None,
+        repeated_benchmarks=[],
+    )
+    manifests = [registry[benchmark_id] for benchmark_id in selected_ids]
+    dataset_overrides = parse_dataset_file_overrides(dataset_file_overrides)
+
+    client = BackendClient(settings)
+    executor = ThreadPoolExecutor(max_workers=settings.max_parallel_requests)
+    total_samples = 0
+    started = time.perf_counter()
+    try:
+        for manifest in manifests:
+            dataset_file = resolve_dataset_file(manifest, dataset_overrides)
+            dataset_row_count = count_samples(dataset_file)
+            if dataset_row_count == 0:
+                log.warning(
+                    "precompute: benchmark=%s dataset=%s is empty, skipping",
+                    manifest.id,
+                    dataset_file,
+                )
+                continue
+            samples = list(
+                iter_selected_samples(
+                    manifest,
+                    dataset_file,
+                    num_limit=num_limit,
+                    seed=seed,
+                )
+            )
+            total_for_bench = len(samples)
+            log.info(
+                "precompute: warming benchmark=%s samples=%d parallel=%d",
+                manifest.id,
+                total_for_bench,
+                settings.max_parallel_requests,
+            )
+
+            def _warm_one(sample) -> tuple[str, Exception | None]:
+                prompt = build_prompt(manifest, sample.question, sample.metadata)
+                try:
+                    client.stream_response(
+                        model="",  # backend uses its loaded model regardless
+                        prompt=prompt,
+                        images=sample.images,
+                        max_output_tokens=1,
+                        system_prompt=manifest.system_prompt,
+                    )
+                    return sample.sample_id, None
+                except Exception as exc:  # noqa: BLE001
+                    return sample.sample_id, exc
+
+            failures = 0
+            for batch_start in range(0, total_for_bench, settings.max_parallel_requests):
+                batch = samples[batch_start : batch_start + settings.max_parallel_requests]
+                futures = [executor.submit(_warm_one, sample) for sample in batch]
+                for future in futures:
+                    sample_id, exc = future.result()
+                    if exc is not None:
+                        failures += 1
+                        log.warning(
+                            "precompute: benchmark=%s sample=%s failed: %s",
+                            manifest.id,
+                            sample_id,
+                            exc,
+                        )
+            total_samples += total_for_bench
+            log.info(
+                "precompute: benchmark=%s done (%d/%d successful)",
+                manifest.id,
+                total_for_bench - failures,
+                total_for_bench,
+            )
+
+        elapsed = time.perf_counter() - started
+        log.info(
+            "precompute complete: %d samples across %d benchmarks in %.1fs",
+            total_samples,
+            len(manifests),
+            elapsed,
+        )
+        return 0
+    finally:
+        executor.shutdown(wait=True, cancel_futures=False)
+        client.close()

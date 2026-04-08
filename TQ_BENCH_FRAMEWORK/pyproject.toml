@@ -11,6 +11,13 @@ dependencies = [
     "pillow>=12.2.0",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
+    # Required only for ``--in-process`` mode (EmbeddedBackendClient).
+    # Pinned to the same omlx_ver_test branch as TQ_BACKEND so the
+    # bench framework and the HTTP backend always agree on the
+    # underlying VLM stack revision.
+    "omlx @ git+https://github.com/Chedrian07/omlx.git@omlx_ver_test",
+    'mlx>=0.31.0 ; sys_platform == "darwin"',
+    'mlx[cuda13]>=0.31.0 ; sys_platform == "linux"',
 ]
 
 [project.scripts]
@@ -22,6 +29,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tq_bench_framework"]
+
+[tool.hatch.metadata]
+# Required because we pin omlx to a git URL (a "direct reference") in
+# project.dependencies. Hatchling refuses direct references unless this
+# flag is set explicitly. See: https://hatch.pypa.io/latest/config/dependency/
+allow-direct-references = true
 
 [tool.hatch.build]
 include = [

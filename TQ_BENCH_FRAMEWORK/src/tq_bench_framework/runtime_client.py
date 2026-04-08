@@ -2,12 +2,30 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
 from tq_bench_framework.schema import RuntimeConfig
 from tq_bench_framework.settings import FrameworkSettings
+
+
+class BackendClientProtocol(Protocol):
+    """Common interface for HTTP and embedded backend clients."""
+
+    def close(self) -> None: ...
+    def get_runtime(self) -> dict[str, Any]: ...
+    def reload_runtime(self, config: RuntimeConfig) -> dict[str, Any]: ...
+    def list_models(self) -> dict[str, Any]: ...
+    def stream_response(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        images: list[str],
+        max_output_tokens: int,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class BackendClient:
@@ -166,3 +184,85 @@ class BackendClient:
             "decode_latency_ms": decode_latency_ms,
             "decode_tps": decode_tps,
         }
+
+
+class EmbeddedBackendClient:
+    """In-process backend client that drives oMLX directly via
+    :class:`tq_bench_framework.embedded_runtime.EmbeddedRuntime`.
+
+    The HTTP+SSE+uvicorn layer is bypassed entirely, saving ~30-80 ms
+    per request on top of the savings from the SSD vision feature
+    cache. Useful when the bench framework and oMLX run on the same
+    machine and the HTTP server provides no value (purely benchmark
+    workloads).
+    """
+
+    def __init__(self, settings: FrameworkSettings):
+        from tq_bench_framework.embedded_runtime import (
+            EmbeddedRuntime,
+            EmbeddedRuntimeSettings,
+        )
+
+        self.settings = settings
+        rt_settings = EmbeddedRuntimeSettings.from_env()
+        self._runtime = EmbeddedRuntime(rt_settings)
+        # Eager-load so the first sample doesn't pay the model load cost.
+        self._runtime.ensure_loaded()
+
+    def close(self) -> None:
+        self._runtime.close()
+
+    def get_runtime(self) -> dict[str, Any]:
+        return {
+            "object": "runtime",
+            **self._runtime.settings.public_state(loaded=self._runtime._engine is not None),
+        }
+
+    def reload_runtime(self, config: RuntimeConfig) -> dict[str, Any]:
+        return self._runtime.reload(
+            kv_quant_scheme=config.scheme,
+            kv_bits=config.bits,
+            sampling_profile=config.sampling_profile,
+            model_id=config.model,
+            adapter_path=config.adapter_path,
+            revision=config.revision,
+        )
+
+    def list_models(self) -> dict[str, Any]:
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": self._runtime.settings.model_id,
+                    "object": "model",
+                    "owned_by": "embedded",
+                }
+            ],
+        }
+
+    def stream_response(
+        self,
+        *,
+        model: str,  # ignored — embedded runtime uses its loaded model
+        prompt: str,
+        images: list[str],
+        max_output_tokens: int,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        return self._runtime.stream_response_sync(
+            prompt=prompt,
+            images=images,
+            max_output_tokens=max_output_tokens,
+            system_prompt=system_prompt,
+        )
+
+
+def make_backend_client(
+    settings: FrameworkSettings,
+    *,
+    in_process: bool = False,
+) -> BackendClientProtocol:
+    """Factory: returns an HTTP or embedded backend client based on flag."""
+    if in_process:
+        return EmbeddedBackendClient(settings)
+    return BackendClient(settings)

@@ -115,15 +115,35 @@ class Runtime:
                 "turboquant_from_first_token": self.settings.turboquant_from_first_token,
             },
             "num_cache_layers": self.num_cache_layers,
+            "paged_ssd_cache_dir": self.settings.paged_ssd_cache_dir,
             "env_files": self.settings.env_files,
         }
 
     def _build_scheduler_config(self) -> OMLXSchedulerConfig:
+        # ``paged_ssd_cache_dir`` enables omlx's paged KV cache *and* the
+        # SSD-backed ``VisionFeatureSSDCache`` (omlx auto-creates the
+        # ``<dir>/vision_features`` subdir). Persisting vision features
+        # across runtime reloads is the single biggest win for the
+        # benchmark sweep workflow because each unique image is encoded
+        # once instead of once-per-runtime-config.
+        cache_dir = self.settings.paged_ssd_cache_dir
+        if cache_dir:
+            from pathlib import Path as _Path
+            try:
+                _Path(cache_dir).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                log.warning(
+                    "Could not create paged_ssd_cache_dir=%s (%s); "
+                    "falling back to in-memory cache.",
+                    cache_dir, exc,
+                )
+                cache_dir = None
         return OMLXSchedulerConfig(
             max_num_seqs=self.settings.max_concurrent_requests,
             completion_batch_size=self.settings.max_concurrent_requests,
             prefill_step_size=self.settings.default_prefill_step_size,
             model_name=self.settings.model_id,
+            paged_ssd_cache_dir=cache_dir,
         )
 
     def _build_model_settings(self) -> ModelSettings:

@@ -68,6 +68,7 @@ class ServerSettings:
     quantized_kv_start: int
     turboquant_seed: int
     turboquant_from_first_token: bool
+    paged_ssd_cache_dir: str | None
 
     @property
     def active_sampling(self) -> SamplingSettings:
@@ -485,7 +486,31 @@ def load_settings() -> ServerSettings:
         turboquant_from_first_token=_read_bool(
             "TQ_TURBOQUANT_FROM_FIRST_TOKEN", True
         ),
+        paged_ssd_cache_dir=_resolve_paged_ssd_cache_dir(),
     )
+
+
+def _resolve_paged_ssd_cache_dir() -> str | None:
+    """Resolve the paged SSD cache directory from environment.
+
+    omlx's :class:`SchedulerConfig.paged_ssd_cache_dir` enables the
+    paged KV-cache *and* the SSD-backed ``VisionFeatureSSDCache`` (it
+    creates ``<dir>/vision_features``). The latter is what makes vision
+    features survive runtime reloads, which is critical for
+    sweep-style benchmark runs that reload the model 5-7 times per
+    sample image.
+
+    - If ``TQ_OMLX_CACHE_DIR`` is unset → defaults to
+      ``~/.omlx_bench/cache``
+    - If set to an empty string → disables SSD cache (back to in-memory only)
+    """
+    raw = os.environ.get("TQ_OMLX_CACHE_DIR")
+    if raw is None:
+        return str((Path.home() / ".omlx_bench" / "cache").resolve())
+    raw = raw.strip()
+    if not raw:
+        return None
+    return str(Path(raw).expanduser().resolve())
 
 
 def replace_settings(
