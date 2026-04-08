@@ -298,18 +298,27 @@ def _save_decoded_image(
     stem: str,
     image_index: int,
     *,
+    record_output_dir: Path | None = None,
     source_path: Path | None = None,
     source_format: str | None = None,
 ) -> str:
     suffix, save_format = _resolve_save_format(source_path=source_path, source_format=source_format or image.format)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{stem}_{image_index}{suffix}"
+    recorded_path = (record_output_dir or output_dir) / f"{stem}_{image_index}{suffix}"
     normalized_image = _normalized_save_target(image, save_format)
     normalized_image.save(output_path, format=save_format)
-    return str(output_path.resolve())
+    return str(recorded_path.resolve())
 
 
-def _copy_existing_image(path: Path, output_dir: Path, stem: str, image_index: int) -> str | None:
+def _copy_existing_image(
+    path: Path,
+    output_dir: Path,
+    stem: str,
+    image_index: int,
+    *,
+    record_output_dir: Path | None = None,
+) -> str | None:
     suffix = path.suffix.lower()
     if suffix not in _PRESERVABLE_SUFFIXES:
         return None
@@ -319,22 +328,48 @@ def _copy_existing_image(path: Path, output_dir: Path, stem: str, image_index: i
         suffix = ".tiff"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{stem}_{image_index}{suffix}"
+    recorded_path = (record_output_dir or output_dir) / f"{stem}_{image_index}{suffix}"
     shutil.copy2(path, output_path)
-    return str(output_path.resolve())
+    return str(recorded_path.resolve())
 
 
-def _save_image(image_value: Any, output_dir: Path, stem: str, image_index: int) -> str:
+def _save_image(
+    image_value: Any,
+    output_dir: Path,
+    stem: str,
+    image_index: int,
+    *,
+    record_output_dir: Path | None = None,
+) -> str:
     if isinstance(image_value, Image.Image):
-        return _save_decoded_image(image_value, output_dir, stem, image_index)
+        return _save_decoded_image(
+            image_value,
+            output_dir,
+            stem,
+            image_index,
+            record_output_dir=record_output_dir,
+        )
 
     if isinstance(image_value, dict):
         if image_value.get("bytes") is not None:
             with Image.open(BytesIO(image_value["bytes"])) as image:
-                return _save_decoded_image(image, output_dir, stem, image_index)
+                return _save_decoded_image(
+                    image,
+                    output_dir,
+                    stem,
+                    image_index,
+                    record_output_dir=record_output_dir,
+                )
         if image_value.get("path"):
             path = Path(str(image_value["path"]))
             if path.exists():
-                copied = _copy_existing_image(path, output_dir, stem, image_index)
+                copied = _copy_existing_image(
+                    path,
+                    output_dir,
+                    stem,
+                    image_index,
+                    record_output_dir=record_output_dir,
+                )
                 if copied is not None:
                     return copied
                 with Image.open(path) as image:
@@ -343,17 +378,30 @@ def _save_image(image_value: Any, output_dir: Path, stem: str, image_index: int)
                         output_dir,
                         stem,
                         image_index,
+                        record_output_dir=record_output_dir,
                         source_path=path,
                     )
 
     if isinstance(image_value, (bytes, bytearray)):
         with Image.open(BytesIO(image_value)) as image:
-            return _save_decoded_image(image, output_dir, stem, image_index)
+            return _save_decoded_image(
+                image,
+                output_dir,
+                stem,
+                image_index,
+                record_output_dir=record_output_dir,
+            )
 
     if isinstance(image_value, str):
         path = Path(image_value)
         if path.exists():
-            copied = _copy_existing_image(path, output_dir, stem, image_index)
+            copied = _copy_existing_image(
+                path,
+                output_dir,
+                stem,
+                image_index,
+                record_output_dir=record_output_dir,
+            )
             if copied is not None:
                 return copied
             with Image.open(path) as image:
@@ -362,6 +410,7 @@ def _save_image(image_value: Any, output_dir: Path, stem: str, image_index: int)
                     output_dir,
                     stem,
                     image_index,
+                    record_output_dir=record_output_dir,
                     source_path=path,
                 )
 
@@ -428,7 +477,13 @@ def prepare_dataset(
                     if not sample_id:
                         sample_id = f"{benchmark_id}-{count:08d}"
                     image_paths = [
-                        _save_image(image_value, temp_images_dir, sample_id, image_index)
+                        _save_image(
+                            image_value,
+                            temp_images_dir,
+                            sample_id,
+                            image_index,
+                            record_output_dir=images_dir,
+                        )
                         for image_index, image_value in enumerate(raw_images, start=1)
                     ]
 
