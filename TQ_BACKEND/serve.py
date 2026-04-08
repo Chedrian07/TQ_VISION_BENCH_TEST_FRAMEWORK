@@ -32,6 +32,7 @@ install_no_video_processor_shim()
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from mlx_vlm.utils import get_model_path
 from omlx.engine import VLMBatchedEngine
 from omlx.model_settings import ModelSettings
 from omlx.scheduler import SchedulerConfig as OMLXSchedulerConfig
@@ -138,8 +139,14 @@ class Runtime:
         return model_settings
 
     def _create_engine(self) -> VLMBatchedEngine:
+        resolved_model_path = str(
+            get_model_path(
+                self.settings.model_id,
+                revision=self.settings.revision,
+            )
+        )
         return VLMBatchedEngine(
-            model_name=self.settings.model_id,
+            model_name=resolved_model_path,
             trust_remote_code=self.settings.trust_remote_code,
             scheduler_config=self._build_scheduler_config(),
             enable_thinking=not self.settings.force_disable_thinking,
