@@ -1,0 +1,9 @@
+.DS_Store
+*.pyc
+__pycache__/
+.venv/
+.env
+!.env.example
+TQ_BENCH_FRAMEWORK/datasets/
+TQ_BENCH_FRAMEWORK/results/
+TQ_BENCH_FRAMEWORK/reports/

@@ -1,0 +1,13 @@
+id: mmmu
+title: MMMU
+stage: comprehensive
+description: Broad multimodal benchmark for final comprehensive evaluation.
+data_file_env: MMMU_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: normalized_exact_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 96
+prompt_template: "{question}"
+system_prompt: "Answer the question using the image. Return only the final answer."
+notes: "Final comprehensive benchmark."

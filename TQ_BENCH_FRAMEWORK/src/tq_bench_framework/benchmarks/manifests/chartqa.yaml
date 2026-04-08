@@ -1,0 +1,13 @@
+id: chartqa
+title: ChartQA
+stage: core
+description: Chart understanding benchmark focused on numbers, axes, and legends.
+data_file_env: CHARTQA_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: numeric_relaxed_accuracy
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_general
+max_output_tokens: 48
+prompt_template: "{question}"
+system_prompt: "Answer the chart question directly. Prefer a short exact answer."
+notes: "Primary chart precision benchmark."

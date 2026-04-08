@@ -1,0 +1,13 @@
+id: textvqa
+title: TextVQA
+stage: core
+description: Scene text VQA for OCR-sensitive multimodal benchmarking.
+data_file_env: TEXTVQA_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: normalized_exact_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_general
+max_output_tokens: 32
+prompt_template: "{question}"
+system_prompt: "Answer the question about the image as briefly and exactly as possible."
+notes: "Primary OCR-heavy benchmark."

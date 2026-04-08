@@ -1,0 +1,13 @@
+id: chartqapro
+title: ChartQAPro
+stage: diagnostic
+description: Harder chart benchmark for follow-up analysis when ChartQA degrades.
+data_file_env: CHARTQAPRO_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: numeric_relaxed_accuracy
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 64
+prompt_template: "{question}"
+system_prompt: "Answer the chart question directly. Prefer a compact exact answer."
+notes: "Conditional extension benchmark."

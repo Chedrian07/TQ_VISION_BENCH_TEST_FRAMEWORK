@@ -1,0 +1,33 @@
+[project]
+name = "tq-bench-framework"
+version = "0.1.0"
+description = "Benchmark runner for TurboQuant and MLX KV-cache quantization on VLM tasks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=4.8.4",
+    "httpx>=0.27",
+    "pillow>=12.2.0",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+tq-bench = "tq_bench_framework.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tq_bench_framework"]
+
+[tool.hatch.build]
+include = [
+    "src/tq_bench_framework/benchmarks/manifests/*.yaml",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
