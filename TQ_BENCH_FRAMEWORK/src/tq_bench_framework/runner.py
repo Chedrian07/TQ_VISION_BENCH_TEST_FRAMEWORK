@@ -157,6 +157,10 @@ def execute_run(options: RunOptions) -> int:
         resume_run_id=options.resume_run_id,
     )
     existing_metadata = logger.load_run_metadata()
+    if options.resume_run_id is not None and existing_metadata is None:
+        raise ValueError(
+            f"Requested resume_run_id='{options.resume_run_id}' but no existing run metadata was found."
+        )
     run_metadata = RunMetadata(
         run_id=logger.run_id,
         run_dir=logger.run_dir,
@@ -172,7 +176,6 @@ def execute_run(options: RunOptions) -> int:
     )
     if options.resume_run_id is not None and existing_metadata is not None:
         guards = {
-            "selected_benchmarks": selected_ids,
             "runtime_matrix": [config.label for config in runtime_matrix],
             "num_limit": options.num_limit,
             "seed": options.seed,
@@ -182,6 +185,13 @@ def execute_run(options: RunOptions) -> int:
             "adapter_path": options.adapter_path,
         }
         mismatches: list[str] = []
+        existing_selected = existing_metadata.get("selected_benchmarks") or []
+        missing_benchmarks = [item for item in selected_ids if item not in existing_selected]
+        if missing_benchmarks:
+            mismatches.append(
+                "selected_benchmarks: requested benchmarks are not a subset of the original run "
+                f"(missing: {missing_benchmarks!r})"
+            )
         for key, value in guards.items():
             if existing_metadata.get(key) != value:
                 mismatches.append(

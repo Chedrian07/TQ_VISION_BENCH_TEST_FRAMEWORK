@@ -192,7 +192,7 @@ def score_mmmu_option_match(prediction: str, answers: list[str], metadata: dict 
     if options:
         answer_index = ord(correct_letter) - 65
         if 0 <= answer_index < len(options):
-            if normalize_text(options[answer_index]) in normalize_text(prediction):
+            if normalize_text(prediction) == normalize_text(options[answer_index]):
                 return 1.0
     return 0.0
 
