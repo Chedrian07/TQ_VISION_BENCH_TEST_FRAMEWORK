@@ -46,6 +46,7 @@ class ServerSettings:
     host: str
     port: int
     api_key: str | None
+    max_concurrent_requests: int
     model_id: str
     adapter_path: str | None
     revision: str | None
@@ -452,6 +453,9 @@ def load_settings() -> ServerSettings:
         host=_read_str("TQ_HOST", "0.0.0.0"),
         port=_read_int("TQ_PORT", 8000, minimum=1),
         api_key=_read_optional_str("TQ_API_KEY"),
+        max_concurrent_requests=_read_int(
+            "TQ_MAX_CONCURRENT_REQUESTS", 1, minimum=1
+        ),
         model_id=_read_str("TQ_MODEL", "mlx-community/Qwen3.5-0.8B-MLX-bf16"),
         adapter_path=_read_optional_str("TQ_ADAPTER_PATH"),
         revision=_read_optional_str("TQ_REVISION"),

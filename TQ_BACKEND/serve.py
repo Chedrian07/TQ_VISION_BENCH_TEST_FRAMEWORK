@@ -4,7 +4,7 @@ OpenAI Responses API server on top of `omlx.compat.vlm`.
 This backend is benchmark-oriented:
 
 1. One MLX VLM model is active per process.
-2. Generation and runtime reloads are serialized.
+2. Request concurrency is capped by configuration.
 3. KV-cache quantization can be switched at runtime.
 4. Qwen3.5 thinking is forced off for reproducible benchmarking.
 """
@@ -78,7 +78,10 @@ class Runtime:
         self.processor = None
         self.num_cache_layers: int | None = None
         self._load_lock = asyncio.Lock()
-        self.generation_lock = asyncio.Lock()
+        self._generation_slots = asyncio.Semaphore(settings.max_concurrent_requests)
+        self._generation_state = asyncio.Condition()
+        self._active_generations = 0
+        self._reloading = False
 
     @property
     def loaded(self) -> bool:
@@ -92,6 +95,9 @@ class Runtime:
                 "id": self.settings.model_id,
                 "adapter_path": self.settings.adapter_path,
                 "revision": self.settings.revision,
+            },
+            "runtime": {
+                "max_concurrent_requests": self.settings.max_concurrent_requests,
             },
             "sampling_profile": self.settings.sampling_profile,
             "sampling": {
@@ -164,8 +170,31 @@ class Runtime:
         gc.collect()
         mx.clear_cache()
 
+    @asynccontextmanager
+    async def generation_session(self):
+        await self._generation_slots.acquire()
+        try:
+            async with self._generation_state:
+                while self._reloading:
+                    await self._generation_state.wait()
+                self._active_generations += 1
+
+            await self.ensure_loaded()
+            yield
+        finally:
+            async with self._generation_state:
+                self._active_generations -= 1
+                if self._active_generations == 0:
+                    self._generation_state.notify_all()
+            self._generation_slots.release()
+
     async def reconfigure(self, new_settings: ServerSettings) -> tuple[dict[str, Any], dict[str, Any]]:
-        async with self.generation_lock:
+        async with self._generation_state:
+            self._reloading = True
+            while self._active_generations > 0:
+                await self._generation_state.wait()
+
+        try:
             async with self._load_lock:
                 loop = asyncio.get_running_loop()
                 previous_settings = self.settings
@@ -195,7 +224,14 @@ class Runtime:
                 self.model = model
                 self.processor = processor
                 self.num_cache_layers = num_cache_layers
+                self._generation_slots = asyncio.Semaphore(
+                    self.settings.max_concurrent_requests
+                )
                 return previous_state, self.public_state()
+        finally:
+            async with self._generation_state:
+                self._reloading = False
+                self._generation_state.notify_all()
 
     def build_turbo_prompt_cache(self) -> list[Any]:
         if self.model is None or self.settings.kv_bits is None:
@@ -780,7 +816,7 @@ async def create_response(request: Request, req: ResponseCreateRequest):
     if req.stream:
 
         async def body() -> AsyncIterator[bytes]:
-            async with RUNTIME.generation_lock:
+            async with RUNTIME.generation_session():
                 settings = RUNTIME.settings
                 if req.model and req.model != settings.model_id:
                     raise HTTPException(
@@ -789,7 +825,6 @@ async def create_response(request: Request, req: ResponseCreateRequest):
                     )
 
                 params = resolve_generation_config(req, settings)
-                await RUNTIME.ensure_loaded()
                 model = RUNTIME.model
                 processor = RUNTIME.processor
                 if model is None or processor is None:
@@ -828,7 +863,7 @@ async def create_response(request: Request, req: ResponseCreateRequest):
             },
         )
 
-    async with RUNTIME.generation_lock:
+    async with RUNTIME.generation_session():
         settings = RUNTIME.settings
         if req.model and req.model != settings.model_id:
             raise HTTPException(
@@ -837,7 +872,6 @@ async def create_response(request: Request, req: ResponseCreateRequest):
             )
 
         params = resolve_generation_config(req, settings)
-        await RUNTIME.ensure_loaded()
         model = RUNTIME.model
         processor = RUNTIME.processor
         if model is None or processor is None:
