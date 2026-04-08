@@ -126,6 +126,19 @@ class RunLogger:
         if existing == serialized:
             return
 
+        if self.metadata_updates_path.exists():
+            last_line = ""
+            with self.metadata_updates_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        last_line = line.strip()
+            if last_line:
+                try:
+                    if json.loads(last_line) == serialized:
+                        return
+                except json.JSONDecodeError:
+                    pass
+
         with self.metadata_updates_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(serialized, ensure_ascii=False) + "\n")
 

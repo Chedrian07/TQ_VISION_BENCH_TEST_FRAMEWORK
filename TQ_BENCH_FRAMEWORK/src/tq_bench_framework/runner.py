@@ -149,6 +149,12 @@ def execute_run(options: RunOptions) -> int:
     manifests = [registry[benchmark_id] for benchmark_id in selected_ids]
     runtime_matrix = build_runtime_matrix(options, manifests)
     dataset_overrides = parse_dataset_file_overrides(options.dataset_file_overrides)
+    if options.resume_run_id is not None:
+        run_json = settings.results_dir / "runs" / options.resume_run_id / "run.json"
+        if not run_json.exists():
+            raise ValueError(
+                f"Requested resume_run_id='{options.resume_run_id}' but no existing run metadata was found."
+            )
 
     logger = RunLogger(
         results_root=settings.results_dir,
@@ -157,10 +163,6 @@ def execute_run(options: RunOptions) -> int:
         resume_run_id=options.resume_run_id,
     )
     existing_metadata = logger.load_run_metadata()
-    if options.resume_run_id is not None and existing_metadata is None:
-        raise ValueError(
-            f"Requested resume_run_id='{options.resume_run_id}' but no existing run metadata was found."
-        )
     run_metadata = RunMetadata(
         run_id=logger.run_id,
         run_dir=logger.run_dir,
@@ -176,7 +178,6 @@ def execute_run(options: RunOptions) -> int:
     )
     if options.resume_run_id is not None and existing_metadata is not None:
         guards = {
-            "runtime_matrix": [config.label for config in runtime_matrix],
             "num_limit": options.num_limit,
             "seed": options.seed,
             "sampling_profile_mode": options.sampling_profile_mode,
@@ -191,6 +192,16 @@ def execute_run(options: RunOptions) -> int:
             mismatches.append(
                 "selected_benchmarks: requested benchmarks are not a subset of the original run "
                 f"(missing: {missing_benchmarks!r})"
+            )
+        existing_runtime_matrix = existing_metadata.get("runtime_matrix") or []
+        missing_runtime_matrix = [
+            item for item in [config.label for config in runtime_matrix]
+            if item not in existing_runtime_matrix
+        ]
+        if missing_runtime_matrix:
+            mismatches.append(
+                "runtime_matrix: requested runtimes are not a subset of the original run "
+                f"(missing: {missing_runtime_matrix!r})"
             )
         for key, value in guards.items():
             if existing_metadata.get(key) != value:
