@@ -8,7 +8,7 @@ dependencies = [
     # oMLX compatibility branch pinned to the upstream PR #675 dependency set.
     # This provides `omlx.compat.vlm`, which wraps the validated mlx-vlm /
     # mlx-lm revisions behind a stable import target for this benchmark stack.
-    "omlx @ git+https://github.com/Chedrian07/omlx.git@omlx_ver",
+    "omlx @ git+https://github.com/Chedrian07/omlx.git@omlx_ver_test",
     # mlx backend split by platform:
     #   - macOS (Apple Silicon): plain `mlx` auto-pulls `mlx-metal` via its own metadata
     #   - Linux (WSL2 / x86_64 + NVIDIA): the `cuda13` extra pulls `mlx-cuda-13`

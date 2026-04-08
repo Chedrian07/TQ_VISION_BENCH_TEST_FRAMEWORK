@@ -1165,7 +1165,7 @@ wheels = [
 [[package]]
 name = "omlx"
 version = "0.3.5.dev1"
-source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver#8f0f6fc3ca8f7a91b3271ee9c7de84c9aa46f2d4" }
+source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test#8f0f6fc3ca8f7a91b3271ee9c7de84c9aa46f2d4" }
 dependencies = [
     { name = "fastapi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "huggingface-hub", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
@@ -2084,7 +2084,7 @@ requires-dist = [
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.31.0" },
     { name = "mlx", extras = ["cuda13"], marker = "sys_platform == 'linux'", specifier = ">=0.31.0" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "omlx", git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver" },
+    { name = "omlx", git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "python-dotenv", specifier = ">=1.0" },
