@@ -94,6 +94,25 @@ class ServerSettings:
             and self.turboquant_from_first_token
         )
 
+    @property
+    def cache_namespace(self) -> str:
+        revision = self.revision or "main"
+        adapter = self.adapter_path or "-"
+        bits = "none" if self.kv_bits is None else f"{self.kv_bits:g}"
+        return "|".join(
+            (
+                f"model={self.model_id}",
+                f"revision={revision}",
+                f"adapter={adapter}",
+                f"scheme={self.kv_quant_scheme}",
+                f"bits={bits}",
+                f"group={self.kv_group_size}",
+                f"start={self.quantized_kv_start}",
+                f"tq_seed={self.turboquant_seed}",
+                f"tq_first={int(self.turboquant_from_first_token)}",
+            )
+        )
+
 
 def _load_env_files() -> tuple[str, ...]:
     project_dir = Path(__file__).resolve().parents[1]

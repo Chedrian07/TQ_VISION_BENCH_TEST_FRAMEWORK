@@ -116,6 +116,7 @@ class Runtime:
             },
             "num_cache_layers": self.num_cache_layers,
             "paged_ssd_cache_dir": self.settings.paged_ssd_cache_dir,
+            "cache_namespace": self.settings.cache_namespace,
             "env_files": self.settings.env_files,
         }
 
@@ -143,6 +144,7 @@ class Runtime:
             completion_batch_size=self.settings.max_concurrent_requests,
             prefill_step_size=self.settings.default_prefill_step_size,
             model_name=self.settings.model_id,
+            cache_namespace=self.settings.cache_namespace,
             paged_ssd_cache_dir=cache_dir,
         )
 
@@ -192,11 +194,12 @@ class Runtime:
                 return
 
             log.info(
-                "Loading model %s (kv_scheme=%s kv_bits=%s profile=%s) ...",
+                "Loading model %s (kv_scheme=%s kv_bits=%s profile=%s cache_ns=%s) ...",
                 self.settings.model_id,
                 self.settings.kv_quant_scheme,
                 self.settings.kv_bits,
                 self.settings.sampling_profile,
+                self.settings.cache_namespace,
             )
             engine = self._create_engine()
             await engine.start()
