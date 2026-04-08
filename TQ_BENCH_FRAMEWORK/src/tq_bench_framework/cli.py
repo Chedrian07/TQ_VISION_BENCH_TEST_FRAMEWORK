@@ -4,11 +4,6 @@ import argparse
 import logging
 from typing import Sequence
 
-from tq_bench_framework.dataset_prepare import (
-    available_source_ids,
-    check_dataset,
-    prepare_dataset,
-)
 from tq_bench_framework.runner import RunOptions, execute_run, print_benchmark_list
 from tq_bench_framework.settings import load_framework_settings
 
@@ -81,6 +76,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print_benchmark_list()
         return 0
     if args.command == "check-datasets":
+        from tq_bench_framework.dataset_prepare import check_dataset
+
         settings = load_framework_settings()
         selected = _resolve_prepare_selection(args.benchmarks, args.benchmark)
         for benchmark_id in selected:
@@ -96,6 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  remote_message: {result.remote_message}")
         return 0
     if args.command == "prepare-datasets":
+        from tq_bench_framework.dataset_prepare import prepare_dataset
+
         settings = load_framework_settings()
         selected = _resolve_prepare_selection(args.benchmarks, args.benchmark)
         for benchmark_id in selected:
@@ -133,6 +132,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _resolve_prepare_selection(benchmark_csv: str | None, repeated: list[str]) -> list[str]:
+    from tq_bench_framework.dataset_prepare import available_source_ids
+
     selected: list[str] = []
     if benchmark_csv:
         selected.extend(item.strip() for item in benchmark_csv.split(",") if item.strip())
