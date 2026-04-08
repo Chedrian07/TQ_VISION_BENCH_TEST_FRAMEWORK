@@ -12,7 +12,6 @@ This backend is benchmark-oriented:
 from __future__ import annotations
 
 import asyncio
-import gc
 import json
 import logging
 import time
@@ -31,19 +30,12 @@ from engine.config import (
 
 install_no_video_processor_shim()
 
-import mlx.core as mx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from mlx_lm.sample_utils import make_presence_penalty
+from omlx.engine import VLMBatchedEngine
+from omlx.model_settings import ModelSettings
+from omlx.scheduler import SchedulerConfig as OMLXSchedulerConfig
 from pydantic import BaseModel, Field
-
-from omlx.compat.vlm import (
-    apply_chat_template,
-    load,
-    make_prompt_cache,
-    quantize_prompt_cache,
-    stream_generate,
-)
 
 try:
     SETTINGS = load_settings()
@@ -74,8 +66,7 @@ class GenerationConfig:
 class Runtime:
     def __init__(self, settings: ServerSettings):
         self.settings = settings
-        self.model = None
-        self.processor = None
+        self.engine: VLMBatchedEngine | None = None
         self.num_cache_layers: int | None = None
         self._load_lock = asyncio.Lock()
         self._generation_slots = asyncio.Semaphore(settings.max_concurrent_requests)
@@ -85,7 +76,7 @@ class Runtime:
 
     @property
     def loaded(self) -> bool:
-        return self.model is not None and self.processor is not None
+        return self.engine is not None
 
     def public_state(self) -> dict[str, Any]:
         sampling = self.settings.active_sampling
@@ -126,6 +117,45 @@ class Runtime:
             "env_files": self.settings.env_files,
         }
 
+    def _build_scheduler_config(self) -> OMLXSchedulerConfig:
+        return OMLXSchedulerConfig(
+            max_num_seqs=self.settings.max_concurrent_requests,
+            completion_batch_size=self.settings.max_concurrent_requests,
+            prefill_step_size=self.settings.default_prefill_step_size,
+            model_name=self.settings.model_id,
+        )
+
+    def _build_model_settings(self) -> ModelSettings:
+        model_settings = ModelSettings()
+        if self.settings.kv_quant_scheme == "turboquant" and self.settings.kv_bits is not None:
+            model_settings.turboquant_kv_enabled = True
+            model_settings.turboquant_kv_bits = float(self.settings.kv_bits)
+        elif self.settings.kv_quant_scheme == "mlx" and self.settings.kv_bits is not None:
+            model_settings.uniform_kv_enabled = True
+            model_settings.uniform_kv_bits = int(self.settings.kv_bits)
+            model_settings.uniform_kv_group_size = self.settings.kv_group_size
+            model_settings.uniform_quantized_kv_start = self.settings.quantized_kv_start
+        return model_settings
+
+    def _create_engine(self) -> VLMBatchedEngine:
+        return VLMBatchedEngine(
+            model_name=self.settings.model_id,
+            trust_remote_code=self.settings.trust_remote_code,
+            scheduler_config=self._build_scheduler_config(),
+            enable_thinking=not self.settings.force_disable_thinking,
+            model_settings=self._build_model_settings(),
+        )
+
+    @staticmethod
+    def _count_cache_layers(engine: VLMBatchedEngine) -> int | None:
+        adapter = getattr(engine, "_adapter", None)
+        if adapter is not None and hasattr(adapter, "make_cache"):
+            try:
+                return len(adapter.make_cache())
+            except Exception:
+                return None
+        return None
+
     async def ensure_loaded(self) -> None:
         if self.loaded:
             return
@@ -134,41 +164,27 @@ class Runtime:
             if self.loaded:
                 return
 
-            loop = asyncio.get_running_loop()
-            model, processor, num_cache_layers = await loop.run_in_executor(
-                None, self._load_sync
+            log.info(
+                "Loading model %s (kv_scheme=%s kv_bits=%s profile=%s) ...",
+                self.settings.model_id,
+                self.settings.kv_quant_scheme,
+                self.settings.kv_bits,
+                self.settings.sampling_profile,
             )
-            self.model = model
-            self.processor = processor
-            self.num_cache_layers = num_cache_layers
+            engine = self._create_engine()
+            await engine.start()
+            self.num_cache_layers = self._count_cache_layers(engine)
+            self.engine = engine
+            log.info(
+                "Model loaded. language_model has %s KV-cache slots.",
+                self.num_cache_layers if self.num_cache_layers is not None else "unknown",
+            )
 
-    def _load_sync(self):
-        log.info(
-            "Loading model %s (kv_scheme=%s kv_bits=%s profile=%s) ...",
-            self.settings.model_id,
-            self.settings.kv_quant_scheme,
-            self.settings.kv_bits,
-            self.settings.sampling_profile,
-        )
-        model, processor = load(
-            self.settings.model_id,
-            adapter_path=self.settings.adapter_path,
-            revision=self.settings.revision,
-            trust_remote_code=self.settings.trust_remote_code,
-        )
-        num_cache_layers = len(make_prompt_cache(model.language_model))
-        log.info(
-            "Model loaded. language_model has %d KV-cache slots.",
-            num_cache_layers,
-        )
-        return model, processor, num_cache_layers
-
-    def _unload_sync(self) -> None:
-        self.model = None
-        self.processor = None
+    async def _unload(self) -> None:
+        if self.engine is not None:
+            await self.engine.stop()
+        self.engine = None
         self.num_cache_layers = None
-        gc.collect()
-        mx.clear_cache()
 
     @asynccontextmanager
     async def generation_session(self):
@@ -196,34 +212,31 @@ class Runtime:
 
         try:
             async with self._load_lock:
-                loop = asyncio.get_running_loop()
                 previous_settings = self.settings
                 previous_state = self.public_state()
 
-                await loop.run_in_executor(None, self._unload_sync)
+                await self._unload()
                 self.settings = new_settings
 
                 try:
-                    model, processor, num_cache_layers = await loop.run_in_executor(
-                        None, self._load_sync
-                    )
+                    engine = self._create_engine()
+                    await engine.start()
+                    self.engine = engine
+                    self.num_cache_layers = self._count_cache_layers(engine)
                 except Exception:
                     log.exception("runtime reload failed, attempting to restore previous model")
                     self.settings = previous_settings
+                    self.engine = None
+                    self.num_cache_layers = None
                     try:
-                        model, processor, num_cache_layers = await loop.run_in_executor(
-                            None, self._load_sync
-                        )
-                        self.model = model
-                        self.processor = processor
-                        self.num_cache_layers = num_cache_layers
+                        engine = self._create_engine()
+                        await engine.start()
+                        self.engine = engine
+                        self.num_cache_layers = self._count_cache_layers(engine)
                     except Exception:
                         log.exception("failed to restore previous model after reload failure")
                     raise
 
-                self.model = model
-                self.processor = processor
-                self.num_cache_layers = num_cache_layers
                 self._generation_slots = asyncio.Semaphore(
                     self.settings.max_concurrent_requests
                 )
@@ -232,64 +245,6 @@ class Runtime:
             async with self._generation_state:
                 self._reloading = False
                 self._generation_state.notify_all()
-
-    def build_turbo_prompt_cache(self) -> list[Any]:
-        if self.model is None or self.settings.kv_bits is None:
-            raise RuntimeError("TurboQuant cache requested before runtime was initialized.")
-
-        prompt_cache = make_prompt_cache(self.model.language_model)
-        quantize_prompt_cache(
-            prompt_cache,
-            quantized_kv_start=0,
-            kv_group_size=self.settings.kv_group_size,
-            kv_bits=self.settings.kv_bits,
-            kv_quant_scheme="turboquant",
-        )
-        return prompt_cache
-
-    def build_generation_kwargs(self, params: GenerationConfig) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {
-            "max_tokens": params.max_output_tokens,
-            "temperature": params.temperature,
-            "top_p": params.top_p,
-            "top_k": params.top_k,
-            "min_p": params.min_p,
-            "prefill_step_size": params.prefill_step_size,
-            "enable_thinking": not self.settings.force_disable_thinking,
-        }
-
-        repetition_penalty = params.repetition_penalty
-        if repetition_penalty is not None and repetition_penalty not in (0.0, 1.0):
-            kwargs["repetition_penalty"] = repetition_penalty
-            kwargs["repetition_context_size"] = params.repetition_context_size
-
-        logits_processors: list[Any] = []
-        if params.presence_penalty is not None and params.presence_penalty != 0.0:
-            logits_processors.append(
-                make_presence_penalty(
-                    params.presence_penalty,
-                    params.presence_context_size,
-                )
-            )
-        if logits_processors:
-            kwargs["logits_processors"] = logits_processors
-
-        if self.settings.use_turboquant_prompt_cache:
-            kwargs["prompt_cache"] = self.build_turbo_prompt_cache()
-        else:
-            if self.settings.kv_bits is not None:
-                kwargs["kv_bits"] = (
-                    int(self.settings.kv_bits)
-                    if self.settings.kv_quant_scheme == "mlx"
-                    else self.settings.kv_bits
-                )
-                kwargs["kv_group_size"] = self.settings.kv_group_size
-                kwargs["quantized_kv_start"] = self.settings.quantized_kv_start
-            if self.settings.active_kv_quant_scheme is not None:
-                kwargs["kv_quant_scheme"] = self.settings.active_kv_quant_scheme
-
-        return kwargs
-
 
 RUNTIME = Runtime(SETTINGS)
 
@@ -359,13 +314,7 @@ def _normalize_role(role: str) -> str:
     return role
 
 
-def build_prompt_and_images(
-    req: ResponseCreateRequest,
-    *,
-    processor: Any,
-    model_config: Any,
-    enable_thinking: bool,
-) -> tuple[str, list[str]]:
+def build_messages(req: ResponseCreateRequest) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
 
     if req.instructions:
@@ -373,9 +322,7 @@ def build_prompt_and_images(
 
     if isinstance(req.input, str):
         messages.append({"role": "user", "content": req.input})
-        images: list[str] = []
     else:
-        images = []
         for msg in req.input:
             role = _normalize_role(msg.role)
             if isinstance(msg.content, str):
@@ -389,18 +336,10 @@ def build_prompt_and_images(
                 elif isinstance(part, InputImagePart):
                     src = _extract_image_source(part)
                     if src:
-                        images.append(src)
-                        parts_out.append({"type": "image"})
+                        parts_out.append({"type": "input_image", "image_url": src})
             messages.append({"role": role, "content": parts_out})
 
-    prompt = apply_chat_template(
-        processor,
-        model_config,
-        messages,
-        num_images=len(images),
-        enable_thinking=enable_thinking,
-    )
-    return prompt, images
+    return messages
 
 
 def resolve_generation_config(
@@ -462,47 +401,27 @@ def authorize_request(request: Request) -> None:
     raise HTTPException(status_code=401, detail="Invalid or missing API key.")
 
 
-_SENTINEL = object()
-
-
 async def run_generation(
     runtime: Runtime,
-    prompt: str,
-    images: list[str],
+    messages: list[dict[str, Any]],
     params: GenerationConfig,
 ) -> AsyncIterator[Any]:
     await runtime.ensure_loaded()
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=64)
-    model = runtime.model
-    processor = runtime.processor
-    if model is None or processor is None:
+    engine = runtime.engine
+    if engine is None:
         raise RuntimeError("Runtime not initialized.")
 
-    def worker() -> None:
-        try:
-            gen_kwargs = runtime.build_generation_kwargs(params)
-            for result in stream_generate(
-                model,
-                processor,
-                prompt,
-                image=images if images else None,
-                **gen_kwargs,
-            ):
-                asyncio.run_coroutine_threadsafe(queue.put(result), loop).result()
-        except Exception as exc:  # noqa: BLE001
-            asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
-        finally:
-            asyncio.run_coroutine_threadsafe(queue.put(_SENTINEL), loop).result()
-
-    loop.run_in_executor(None, worker)
-
-    while True:
-        item = await queue.get()
-        if item is _SENTINEL:
-            return
-        if isinstance(item, BaseException):
-            raise item
+    stream = engine.stream_chat(
+        messages=messages,
+        max_tokens=params.max_output_tokens,
+        temperature=params.temperature,
+        top_p=params.top_p,
+        top_k=params.top_k,
+        min_p=params.min_p,
+        repetition_penalty=params.repetition_penalty or 1.0,
+        presence_penalty=params.presence_penalty or 0.0,
+    )
+    async for item in stream:
         yield item
 
 
@@ -572,8 +491,7 @@ def _sse(event: str, data: dict[str, Any]) -> bytes:
 
 async def stream_sse(
     req: ResponseCreateRequest,
-    prompt: str,
-    images: list[str],
+    messages: list[dict[str, Any]],
     params: GenerationConfig,
     *,
     response_id: str,
@@ -643,8 +561,8 @@ async def stream_sse(
     output_tokens = 0
 
     try:
-        async for result in run_generation(RUNTIME, prompt, images, params):
-            delta = result.text or ""
+        async for result in run_generation(RUNTIME, messages, params):
+            delta = result.new_text or result.text or ""
             last_result = result
             if delta:
                 full_text_parts.append(delta)
@@ -678,7 +596,7 @@ async def stream_sse(
     full_text = "".join(full_text_parts)
     if last_result is not None:
         input_tokens = int(getattr(last_result, "prompt_tokens", 0) or 0)
-        output_tokens = int(getattr(last_result, "generation_tokens", 0) or 0)
+        output_tokens = int(getattr(last_result, "completion_tokens", 0) or 0)
 
     yield _sse(
         "response.output_text.done",
@@ -825,27 +743,20 @@ async def create_response(request: Request, req: ResponseCreateRequest):
                     )
 
                 params = resolve_generation_config(req, settings)
-                model = RUNTIME.model
-                processor = RUNTIME.processor
-                if model is None or processor is None:
+                engine = RUNTIME.engine
+                if engine is None:
                     raise HTTPException(
                         status_code=500,
                         detail="Model runtime failed to initialize.",
                     )
 
-                prompt, images = build_prompt_and_images(
-                    req,
-                    processor=processor,
-                    model_config=model.config,
-                    enable_thinking=not settings.force_disable_thinking,
-                )
+                messages = build_messages(req)
                 response_id = _new_id("resp")
                 created_at = _now()
 
                 async for chunk in stream_sse(
                     req,
-                    prompt,
-                    images,
+                    messages,
                     params,
                     response_id=response_id,
                     created_at=created_at,
@@ -872,18 +783,12 @@ async def create_response(request: Request, req: ResponseCreateRequest):
             )
 
         params = resolve_generation_config(req, settings)
-        model = RUNTIME.model
-        processor = RUNTIME.processor
-        if model is None or processor is None:
+        engine = RUNTIME.engine
+        if engine is None:
             raise HTTPException(status_code=500, detail="Model runtime failed to initialize.")
 
         try:
-            prompt, images = build_prompt_and_images(
-                req,
-                processor=processor,
-                model_config=model.config,
-                enable_thinking=not settings.force_disable_thinking,
-            )
+            messages = build_messages(req)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"Bad input: {exc}") from exc
 
@@ -891,9 +796,10 @@ async def create_response(request: Request, req: ResponseCreateRequest):
         last_result = None
 
         try:
-            async for result in run_generation(RUNTIME, prompt, images, params):
-                if result.text:
-                    full_text_parts.append(result.text)
+            async for result in run_generation(RUNTIME, messages, params):
+                delta = result.new_text or result.text or ""
+                if delta:
+                    full_text_parts.append(delta)
                 last_result = result
         except Exception as exc:  # noqa: BLE001
             log.exception("generation failed")
@@ -901,7 +807,7 @@ async def create_response(request: Request, req: ResponseCreateRequest):
 
         full_text = "".join(full_text_parts)
         input_tokens = int(getattr(last_result, "prompt_tokens", 0) or 0)
-        output_tokens = int(getattr(last_result, "generation_tokens", 0) or 0)
+        output_tokens = int(getattr(last_result, "completion_tokens", 0) or 0)
 
         payload = _build_completed_response(
             response_id=_new_id("resp"),
