@@ -93,26 +93,29 @@ class RunLogger:
         rows: list[CellSummary] = []
         with self.summary_csv_path.open("r", encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
-                rows.append(
-                    CellSummary(
-                        benchmark_id=row["benchmark_id"],
-                        benchmark_title=row["benchmark_title"],
-                        runtime_label=row["runtime_label"],
-                        quant_scheme=row["quant_scheme"],
-                        quant_bits=float(row["quant_bits"]) if row["quant_bits"] not in ("", "None") else None,
-                        sampling_profile=row["sampling_profile"],
-                        metric=row["metric"],
-                        num_samples=int(row["num_samples"]),
-                        num_scored=int(row["num_scored"]),
-                        num_errors=int(row["num_errors"]),
-                        mean_score=float(row["mean_score"]),
-                        mean_ttft_ms=float(row["mean_ttft_ms"]) if row["mean_ttft_ms"] not in ("", "None") else None,
-                        mean_total_latency_ms=float(row["mean_total_latency_ms"]),
-                        mean_decode_tps=float(row["mean_decode_tps"]) if row["mean_decode_tps"] not in ("", "None") else None,
-                        mean_prompt_tokens=float(row["mean_prompt_tokens"]),
-                        mean_output_tokens=float(row["mean_output_tokens"]),
+                try:
+                    rows.append(
+                        CellSummary(
+                            benchmark_id=row["benchmark_id"],
+                            benchmark_title=row["benchmark_title"],
+                            runtime_label=row["runtime_label"],
+                            quant_scheme=row["quant_scheme"],
+                            quant_bits=float(row["quant_bits"]) if row.get("quant_bits") not in ("", "None", None) else None,
+                            sampling_profile=row["sampling_profile"],
+                            metric=row["metric"],
+                            num_samples=int(row["num_samples"]),
+                            num_scored=int(row["num_scored"]),
+                            num_errors=int(row["num_errors"]),
+                            mean_score=float(row["mean_score"]),
+                            mean_ttft_ms=float(row["mean_ttft_ms"]) if row.get("mean_ttft_ms") not in ("", "None", None) else None,
+                            mean_total_latency_ms=float(row["mean_total_latency_ms"]),
+                            mean_decode_tps=float(row["mean_decode_tps"]) if row.get("mean_decode_tps") not in ("", "None", None) else None,
+                            mean_prompt_tokens=float(row["mean_prompt_tokens"]),
+                            mean_output_tokens=float(row["mean_output_tokens"]),
+                        )
                     )
-                )
+                except (KeyError, TypeError, ValueError) as exc:
+                    log.warning("Skipping malformed summary row in %s: %s (%s)", self.summary_csv_path, row, exc)
         return rows
 
     def write_run_metadata(self, metadata: RunMetadata) -> None:
@@ -161,12 +164,7 @@ class RunLogger:
         return self.raw_dir / f"{benchmark_id}__{runtime_filename_label}.jsonl"
 
     def load_completed_sample_ids(self, path: Path) -> set[str]:
-        if not path.exists():
-            return set()
-        completed: set[str] = set()
-        for row in self.load_sample_results(path):
-            if row.sample_id:
-                completed.add(str(row.sample_id))
+        completed, _ = self.restore_resume_state(path)
         return completed
 
     def load_sample_results(self, path: Path) -> list[SampleResult]:
@@ -179,7 +177,11 @@ class RunLogger:
                 line = line.strip()
                 if not line:
                     continue
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    log.warning("Skipping malformed raw sample row in %s: %s", path, exc)
+                    continue
                 normalized: dict[str, Any] = {}
                 skip_row = False
                 for name, field in sample_fields.items():
@@ -201,10 +203,17 @@ class RunLogger:
         return rows
 
     def restore_accumulator(self, path: Path) -> SummaryAccumulator:
+        _, accumulator = self.restore_resume_state(path)
+        return accumulator
+
+    def restore_resume_state(self, path: Path) -> tuple[set[str], SummaryAccumulator]:
+        completed: set[str] = set()
         accumulator = SummaryAccumulator()
         for result in self.load_sample_results(path):
+            if result.sample_id:
+                completed.add(str(result.sample_id))
             accumulator.update(result)
-        return accumulator
+        return completed, accumulator
 
     def append_sample_result(self, path: Path, result: SampleResult) -> None:
         with path.open("a", encoding="utf-8") as handle:

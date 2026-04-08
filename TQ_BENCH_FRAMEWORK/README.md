@@ -74,6 +74,12 @@ Set it in `.env` or pass `--dataset-file textvqa=/abs/path/to/file.jsonl`.
 
 and updates `.env` automatically with the resolved file path.
 
+Relevant timeout knobs:
+
+- `TQ_BENCH_REQUEST_TIMEOUT_SECONDS` for inference requests
+- `TQ_BENCH_RELOAD_TIMEOUT_SECONDS` for backend runtime reload / state checks
+- `TQ_BENCH_CONNECT_TIMEOUT_SECONDS` for TCP connect timeout
+
 ## Commands
 
 ### List manifests
@@ -93,6 +99,9 @@ uv run tq-bench check-datasets --benchmarks textvqa,chartqa,ai2d,docvqa
 ```bash
 uv run tq-bench prepare-datasets --benchmarks textvqa,chartqa --num 100 --overwrite
 ```
+
+`prepare-datasets`는 expected row count를 검증하고, partial JSONL이나 stale image
+artifacts를 재사용하지 않도록 안전하게 다시 생성한다.
 
 ### Run a benchmark sweep
 

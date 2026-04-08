@@ -8,6 +8,7 @@ from typing import Iterable
 from tq_bench_framework.benchmarks.registry import load_benchmark_registry
 from tq_bench_framework.dataset import (
     DatasetError,
+    count_samples,
     iter_selected_samples,
     parse_dataset_file_overrides,
     resolve_dataset_file,
@@ -138,6 +139,50 @@ def build_prompt(manifest: BenchmarkManifest, question: str, metadata: dict) -> 
         return question
 
 
+def _verify_runtime_state(runtime: RuntimeConfig, runtime_state: dict) -> None:
+    if not runtime_state.get("loaded"):
+        raise RuntimeError(f"Backend runtime '{runtime.label}' is not loaded after reload.")
+
+    kv_cache = runtime_state.get("kv_cache") or {}
+    actual_scheme = kv_cache.get("scheme")
+    if actual_scheme != runtime.scheme:
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: scheme={actual_scheme!r} expected={runtime.scheme!r}."
+        )
+
+    actual_bits = kv_cache.get("bits")
+    if runtime.bits is None:
+        if actual_bits not in (None, "", "None"):
+            raise RuntimeError(
+                f"Backend runtime reload mismatch for {runtime.label}: bits={actual_bits!r} expected=None."
+            )
+    elif actual_bits is None or float(actual_bits) != float(runtime.bits):
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: bits={actual_bits!r} expected={runtime.bits!r}."
+        )
+
+    actual_profile = runtime_state.get("sampling_profile")
+    if actual_profile != runtime.sampling_profile:
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: sampling_profile={actual_profile!r} "
+            f"expected={runtime.sampling_profile!r}."
+        )
+
+    model_state = runtime_state.get("model") or {}
+    if runtime.model is not None and model_state.get("id") != runtime.model:
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: model={model_state.get('id')!r} expected={runtime.model!r}."
+        )
+    if runtime.revision is not None and model_state.get("revision") != runtime.revision:
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: revision={model_state.get('revision')!r} expected={runtime.revision!r}."
+        )
+    if runtime.adapter_path is not None and model_state.get("adapter_path") != runtime.adapter_path:
+        raise RuntimeError(
+            f"Backend runtime reload mismatch for {runtime.label}: adapter_path={model_state.get('adapter_path')!r} expected={runtime.adapter_path!r}."
+        )
+
+
 def execute_run(options: RunOptions) -> int:
     settings = load_framework_settings()
     registry = load_benchmark_registry()
@@ -244,9 +289,15 @@ def execute_run(options: RunOptions) -> int:
             logger.record_event("runtime_reload_done", reload_payload)
 
             runtime_state = reload_payload.get("current", {})
+            _verify_runtime_state(runtime, runtime_state)
             model_id = str(runtime_state.get("model", {}).get("id") or runtime.model or "")
             for manifest, cell_runtime in grouped_jobs:
                 dataset_file = resolve_dataset_file(manifest, dataset_overrides)
+                dataset_row_count = count_samples(dataset_file)
+                if dataset_row_count == 0:
+                    raise DatasetError(
+                        f"Dataset file '{dataset_file}' for benchmark '{manifest.id}' has no non-empty rows."
+                    )
                 samples = iter_selected_samples(
                     manifest,
                     dataset_file,
@@ -254,8 +305,14 @@ def execute_run(options: RunOptions) -> int:
                     seed=options.seed,
                 )
                 raw_path = logger.raw_results_path(manifest.id, cell_runtime.filename_label)
-                completed_ids = logger.load_completed_sample_ids(raw_path) if options.resume else set()
-                accumulator = logger.restore_accumulator(raw_path) if options.resume else SummaryAccumulator()
+                completed_ids, accumulator = (
+                    logger.restore_resume_state(raw_path)
+                    if options.resume
+                    else (set(), SummaryAccumulator())
+                )
+                total_selected = dataset_row_count if options.num_limit is None else min(dataset_row_count, options.num_limit)
+                remaining_samples = max(total_selected - len(completed_ids), 0)
+                progress_interval = max(50, remaining_samples // 20) if remaining_samples >= 50 else None
                 logger.record_event(
                     "cell_start",
                     {
@@ -267,13 +324,16 @@ def execute_run(options: RunOptions) -> int:
                     },
                 )
                 log.info(
-                    "Running benchmark=%s runtime=%s dataset=%s num_limit=%s",
+                    "Running benchmark=%s runtime=%s dataset=%s num_limit=%s total_selected=%d remaining=%d",
                     manifest.id,
                     cell_runtime.label,
                     dataset_file,
                     options.num_limit,
+                    total_selected,
+                    remaining_samples,
                 )
 
+                processed_in_cell = 0
                 for sample in samples:
                     if sample.sample_id in completed_ids:
                         continue
@@ -350,6 +410,18 @@ def execute_run(options: RunOptions) -> int:
 
                     logger.append_sample_result(raw_path, result)
                     accumulator.update(result)
+                    processed_in_cell += 1
+                    if progress_interval and (
+                        processed_in_cell % progress_interval == 0
+                        or processed_in_cell == remaining_samples
+                    ):
+                        log.info(
+                            "Progress benchmark=%s runtime=%s %d/%d",
+                            manifest.id,
+                            cell_runtime.label,
+                            processed_in_cell,
+                            remaining_samples,
+                        )
 
                 summary = finalize_cell_summary(
                     benchmark_id=manifest.id,

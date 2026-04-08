@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 from pathlib import Path
 from typing import Iterable
 
 from tq_bench_framework.schema import BenchmarkManifest, BenchmarkSample
+
+log = logging.getLogger("tq-bench.dataset")
 
 
 class DatasetError(ValueError):
@@ -108,13 +111,50 @@ def stream_samples(
     dataset_file: Path,
 ) -> Iterable[BenchmarkSample]:
     base_dir = dataset_file.parent
+    yielded = 0
+    skipped = 0
     with dataset_file.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
-            record = json.loads(line)
-            yield _build_sample(manifest, record, line_no=line_no, base_dir=base_dir)
+            try:
+                record = json.loads(line)
+                sample = _build_sample(manifest, record, line_no=line_no, base_dir=base_dir)
+            except json.JSONDecodeError as exc:
+                skipped += 1
+                log.warning(
+                    "Skipping malformed JSON row in %s line=%d: %s",
+                    dataset_file,
+                    line_no,
+                    exc,
+                )
+                continue
+            except DatasetError as exc:
+                skipped += 1
+                log.warning(
+                    "Skipping invalid sample in %s line=%d: %s",
+                    dataset_file,
+                    line_no,
+                    exc,
+                )
+                continue
+            yielded += 1
+            yield sample
+    if yielded == 0:
+        raise DatasetError(f"Dataset '{dataset_file}' yielded no valid samples for benchmark '{manifest.id}'.")
+    if skipped:
+        log.warning(
+            "Skipped %d invalid rows while streaming dataset %s for benchmark=%s",
+            skipped,
+            dataset_file,
+            manifest.id,
+        )
+
+
+def count_samples(dataset_file: Path) -> int:
+    with dataset_file.open("r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
 
 
 def select_samples(

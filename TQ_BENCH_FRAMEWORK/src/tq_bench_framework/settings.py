@@ -15,6 +15,7 @@ class FrameworkSettings:
     openai_base_url: str
     hf_token: str | None
     request_timeout_seconds: float
+    reload_timeout_seconds: float
     connect_timeout_seconds: float
     max_retries: int
     datasets_root: Path
@@ -94,7 +95,8 @@ def load_framework_settings() -> FrameworkSettings:
         openai_api_key=_read_str("OPENAI_API_KEY", "api"),
         openai_base_url=base_url,
         hf_token=_read_str("HF_TOKEN", "").strip() or None,
-        request_timeout_seconds=_read_float("TQ_BENCH_REQUEST_TIMEOUT_SECONDS", 180.0),
+        request_timeout_seconds=_read_float("TQ_BENCH_REQUEST_TIMEOUT_SECONDS", 600.0),
+        reload_timeout_seconds=_read_float("TQ_BENCH_RELOAD_TIMEOUT_SECONDS", 60.0),
         connect_timeout_seconds=_read_float("TQ_BENCH_CONNECT_TIMEOUT_SECONDS", 10.0),
         max_retries=_read_int("TQ_BENCH_MAX_RETRIES", 2),
         datasets_root=datasets_root,

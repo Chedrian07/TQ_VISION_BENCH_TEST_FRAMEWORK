@@ -13,12 +13,24 @@ from tq_bench_framework.settings import FrameworkSettings
 class BackendClient:
     def __init__(self, settings: FrameworkSettings):
         self.settings = settings
-        timeout = httpx.Timeout(
+        request_timeout = httpx.Timeout(
             settings.request_timeout_seconds,
             connect=settings.connect_timeout_seconds,
         )
+        control_timeout = httpx.Timeout(
+            settings.reload_timeout_seconds,
+            connect=settings.connect_timeout_seconds,
+        )
+        headers = {
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        }
         self.client = httpx.Client(
-            timeout=timeout,
+            timeout=request_timeout,
+            headers=headers,
+        )
+        self.control_client = httpx.Client(
+            timeout=control_timeout,
             headers={
                 "Authorization": f"Bearer {settings.openai_api_key}",
                 "Content-Type": "application/json",
@@ -27,22 +39,23 @@ class BackendClient:
 
     def close(self) -> None:
         self.client.close()
+        self.control_client.close()
 
     def _url(self, path: str) -> str:
         return f"{self.settings.openai_base_url}{path}"
 
     def get_runtime(self) -> dict[str, Any]:
-        response = self.client.get(self._url("/runtime"))
+        response = self.control_client.get(self._url("/runtime"))
         response.raise_for_status()
         return response.json()
 
     def reload_runtime(self, config: RuntimeConfig) -> dict[str, Any]:
-        response = self.client.post(self._url("/runtime/reload"), json=config.reload_payload())
+        response = self.control_client.post(self._url("/runtime/reload"), json=config.reload_payload())
         response.raise_for_status()
         return response.json()
 
     def list_models(self) -> dict[str, Any]:
-        response = self.client.get(self._url("/models"))
+        response = self.control_client.get(self._url("/models"))
         response.raise_for_status()
         return response.json()
 
@@ -113,6 +126,8 @@ class BackendClient:
                     continue
                 data = line.split(":", 1)[1].strip()
                 if not data:
+                    continue
+                if data == "[DONE]":
                     continue
                 event_payload = json.loads(data)
                 if current_event == "response.output_text.delta":

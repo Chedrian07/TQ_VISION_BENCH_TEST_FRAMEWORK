@@ -242,7 +242,7 @@ def score_mathvista_match(prediction: str, answers: list[str], metadata: dict | 
                         continue
                     precision = metadata.get("precision")
                     tolerance = (
-                        10 ** (-int(precision))
+                        10 ** (-int(float(precision)))
                         if precision not in (None, "", "None")
                         else 1e-3
                     )
