@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -183,6 +184,106 @@ def _verify_runtime_state(runtime: RuntimeConfig, runtime_state: dict) -> None:
         )
 
 
+def _iter_pending_sample_batches(
+    samples: Iterable,
+    *,
+    completed_ids: set[str],
+    batch_size: int,
+):
+    batch: list = []
+    for sample in samples:
+        if sample.sample_id in completed_ids:
+            continue
+        batch.append(sample)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _run_single_sample(
+    *,
+    client: BackendClient,
+    run_id: str,
+    manifest: BenchmarkManifest,
+    runtime: RuntimeConfig,
+    model_id: str,
+    sample,
+    max_output_tokens_override: int | None,
+) -> tuple[SampleResult, Exception | None]:
+    prompt = build_prompt(manifest, sample.question, sample.metadata)
+    try:
+        inference = client.stream_response(
+            model=model_id,
+            prompt=prompt,
+            images=sample.images,
+            max_output_tokens=max_output_tokens_override or manifest.max_output_tokens,
+            system_prompt=manifest.system_prompt,
+        )
+        prediction = str(inference["output_text"]).strip()
+        score = score_prediction(
+            manifest.metric,
+            prediction,
+            sample.answers,
+            sample.metadata,
+        )
+        return (
+            SampleResult(
+                run_id=run_id,
+                benchmark_id=manifest.id,
+                benchmark_title=manifest.title,
+                sample_id=sample.sample_id,
+                runtime_label=runtime.label,
+                quant_scheme=runtime.scheme,
+                quant_bits=runtime.bits,
+                sampling_profile=runtime.sampling_profile,
+                question=sample.question,
+                answers=sample.answers,
+                prediction=prediction,
+                score=score,
+                metric=manifest.metric,
+                ttft_ms=inference["ttft_ms"],
+                total_latency_ms=inference["total_latency_ms"],
+                decode_latency_ms=inference["decode_latency_ms"],
+                decode_tps=inference["decode_tps"],
+                prompt_tokens=inference["prompt_tokens"],
+                output_tokens=inference["output_tokens"],
+                images=sample.images,
+                metadata=sample.metadata,
+            ),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return (
+            SampleResult(
+                run_id=run_id,
+                benchmark_id=manifest.id,
+                benchmark_title=manifest.title,
+                sample_id=sample.sample_id,
+                runtime_label=runtime.label,
+                quant_scheme=runtime.scheme,
+                quant_bits=runtime.bits,
+                sampling_profile=runtime.sampling_profile,
+                question=sample.question,
+                answers=sample.answers,
+                prediction="",
+                score=0.0,
+                metric=manifest.metric,
+                ttft_ms=None,
+                total_latency_ms=0.0,
+                decode_latency_ms=None,
+                decode_tps=None,
+                prompt_tokens=0,
+                output_tokens=0,
+                images=sample.images,
+                metadata=sample.metadata,
+                error=str(exc),
+            ),
+            exc,
+        )
+
+
 def execute_run(options: RunOptions) -> int:
     settings = load_framework_settings()
     registry = load_benchmark_registry()
@@ -272,6 +373,7 @@ def execute_run(options: RunOptions) -> int:
         return 0
 
     client = BackendClient(settings)
+    executor = ThreadPoolExecutor(max_workers=settings.max_parallel_requests)
     try:
         runtime_groups: dict[tuple[str, str | None, float | None], list[tuple[BenchmarkManifest, RuntimeConfig]]] = defaultdict(list)
         for manifest in manifests:
@@ -324,104 +426,59 @@ def execute_run(options: RunOptions) -> int:
                     },
                 )
                 log.info(
-                    "Running benchmark=%s runtime=%s dataset=%s num_limit=%s total_selected=%d remaining=%d",
+                    "Running benchmark=%s runtime=%s dataset=%s num_limit=%s total_selected=%d remaining=%d parallel=%d",
                     manifest.id,
                     cell_runtime.label,
                     dataset_file,
                     options.num_limit,
                     total_selected,
                     remaining_samples,
+                    settings.max_parallel_requests,
                 )
 
                 processed_in_cell = 0
-                for sample in samples:
-                    if sample.sample_id in completed_ids:
-                        continue
-
-                    prompt = build_prompt(manifest, sample.question, sample.metadata)
-                    try:
-                        inference = client.stream_response(
-                            model=model_id,
-                            prompt=prompt,
-                            images=sample.images,
-                            max_output_tokens=options.max_output_tokens_override
-                            or manifest.max_output_tokens,
-                            system_prompt=manifest.system_prompt,
-                        )
-                        prediction = str(inference["output_text"]).strip()
-                        score = score_prediction(
-                            manifest.metric,
-                            prediction,
-                            sample.answers,
-                            sample.metadata,
-                        )
-                        result = SampleResult(
+                for sample_batch in _iter_pending_sample_batches(
+                    samples,
+                    completed_ids=completed_ids,
+                    batch_size=settings.max_parallel_requests,
+                ):
+                    futures = [
+                        executor.submit(
+                            _run_single_sample,
+                            client=client,
                             run_id=logger.run_id,
-                            benchmark_id=manifest.id,
-                            benchmark_title=manifest.title,
-                            sample_id=sample.sample_id,
-                            runtime_label=cell_runtime.label,
-                            quant_scheme=cell_runtime.scheme,
-                            quant_bits=cell_runtime.bits,
-                            sampling_profile=cell_runtime.sampling_profile,
-                            question=sample.question,
-                            answers=sample.answers,
-                            prediction=prediction,
-                            score=score,
-                            metric=manifest.metric,
-                            ttft_ms=inference["ttft_ms"],
-                            total_latency_ms=inference["total_latency_ms"],
-                            decode_latency_ms=inference["decode_latency_ms"],
-                            decode_tps=inference["decode_tps"],
-                            prompt_tokens=inference["prompt_tokens"],
-                            output_tokens=inference["output_tokens"],
-                            images=sample.images,
-                            metadata=sample.metadata,
+                            manifest=manifest,
+                            runtime=cell_runtime,
+                            model_id=model_id,
+                            sample=sample,
+                            max_output_tokens_override=options.max_output_tokens_override,
                         )
-                    except Exception as exc:  # noqa: BLE001
-                        result = SampleResult(
-                            run_id=logger.run_id,
-                            benchmark_id=manifest.id,
-                            benchmark_title=manifest.title,
-                            sample_id=sample.sample_id,
-                            runtime_label=cell_runtime.label,
-                            quant_scheme=cell_runtime.scheme,
-                            quant_bits=cell_runtime.bits,
-                            sampling_profile=cell_runtime.sampling_profile,
-                            question=sample.question,
-                            answers=sample.answers,
-                            prediction="",
-                            score=0.0,
-                            metric=manifest.metric,
-                            ttft_ms=None,
-                            total_latency_ms=0.0,
-                            decode_latency_ms=None,
-                            decode_tps=None,
-                            prompt_tokens=0,
-                            output_tokens=0,
-                            images=sample.images,
-                            metadata=sample.metadata,
-                            error=str(exc),
-                        )
-                        if options.fail_fast:
-                            logger.append_sample_result(raw_path, result)
-                            accumulator.update(result)
-                            raise
+                        for sample in sample_batch
+                    ]
 
-                    logger.append_sample_result(raw_path, result)
-                    accumulator.update(result)
-                    processed_in_cell += 1
-                    if progress_interval and (
-                        processed_in_cell % progress_interval == 0
-                        or processed_in_cell == remaining_samples
-                    ):
-                        log.info(
-                            "Progress benchmark=%s runtime=%s %d/%d",
-                            manifest.id,
-                            cell_runtime.label,
-                            processed_in_cell,
-                            remaining_samples,
-                        )
+                    batch_failure: Exception | None = None
+                    for future in futures:
+                        result, exc = future.result()
+                        logger.append_sample_result(raw_path, result)
+                        accumulator.update(result)
+                        processed_in_cell += 1
+                        if exc is not None and batch_failure is None:
+                            batch_failure = exc
+
+                        if progress_interval and (
+                            processed_in_cell % progress_interval == 0
+                            or processed_in_cell == remaining_samples
+                        ):
+                            log.info(
+                                "Progress benchmark=%s runtime=%s %d/%d",
+                                manifest.id,
+                                cell_runtime.label,
+                                processed_in_cell,
+                                remaining_samples,
+                            )
+
+                    if batch_failure is not None and options.fail_fast:
+                        raise batch_failure
 
                 summary = finalize_cell_summary(
                     benchmark_id=manifest.id,
@@ -453,6 +510,7 @@ def execute_run(options: RunOptions) -> int:
         logger.finalize_reports()
         return 0
     finally:
+        executor.shutdown(wait=True, cancel_futures=False)
         client.close()
 
 

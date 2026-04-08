@@ -14,6 +14,7 @@ class FrameworkSettings:
     openai_api_key: str
     openai_base_url: str
     hf_token: str | None
+    max_parallel_requests: int
     request_timeout_seconds: float
     reload_timeout_seconds: float
     connect_timeout_seconds: float
@@ -95,6 +96,7 @@ def load_framework_settings() -> FrameworkSettings:
         openai_api_key=_read_str("OPENAI_API_KEY", "api"),
         openai_base_url=base_url,
         hf_token=_read_str("HF_TOKEN", "").strip() or None,
+        max_parallel_requests=max(1, _read_int("TQ_BENCH_MAX_PARALLEL_REQUESTS", 4)),
         request_timeout_seconds=_read_float("TQ_BENCH_REQUEST_TIMEOUT_SECONDS", 600.0),
         reload_timeout_seconds=_read_float("TQ_BENCH_RELOAD_TIMEOUT_SECONDS", 60.0),
         connect_timeout_seconds=_read_float("TQ_BENCH_CONNECT_TIMEOUT_SECONDS", 10.0),
