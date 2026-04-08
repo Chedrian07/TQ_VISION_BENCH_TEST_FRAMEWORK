@@ -50,6 +50,7 @@ class RunOptions:
     turboquant_bits: tuple[float, ...]
     max_output_tokens_override: int | None
     dry_run: bool
+    resume_run_id: str | None
 
 
 def parse_benchmark_selection(
@@ -147,6 +148,7 @@ def execute_run(options: RunOptions) -> int:
         results_root=settings.results_dir,
         reports_root=settings.reports_dir,
         run_name=options.run_name,
+        resume_run_id=options.resume_run_id,
     )
     run_metadata = RunMetadata(
         run_id=logger.run_id,
@@ -156,6 +158,7 @@ def execute_run(options: RunOptions) -> int:
         num_limit=options.num_limit,
         seed=options.seed,
         sampling_profile_mode=options.sampling_profile_mode,
+        resumed_from_run_id=options.resume_run_id,
     )
     logger.write_run_metadata(run_metadata)
 
@@ -198,8 +201,7 @@ def execute_run(options: RunOptions) -> int:
                 )
                 raw_path = logger.raw_results_path(manifest.id, cell_runtime.filename_label)
                 completed_ids = logger.load_completed_sample_ids(raw_path) if options.resume else set()
-
-                accumulator = SummaryAccumulator()
+                accumulator = logger.restore_accumulator(raw_path) if options.resume else SummaryAccumulator()
                 logger.record_event(
                     "cell_start",
                     {

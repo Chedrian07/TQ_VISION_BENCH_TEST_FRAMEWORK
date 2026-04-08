@@ -7,7 +7,7 @@ import re
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s.%/-]+", re.UNICODE)
-_NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?%?")
+_NUMBER_RE = re.compile(r"-?\$?\d[\d,]*(?:\.\d+)?%?")
 _OPTION_RE = re.compile(r"\b([A-G])\b", re.IGNORECASE)
 _FINAL_ANSWER_RE = re.compile(
     r"(?:final answer|answer)\s*[:：]?\s*[\(\[]?\s*([A-G])\s*[\)\]]?",
@@ -70,12 +70,12 @@ def score_anls(prediction: str, answers: list[str]) -> float:
 
 
 def _parse_number(text: str) -> float | None:
-    matches = _NUMBER_RE.findall(normalize_text(text))
+    matches = _NUMBER_RE.findall(text)
     if not matches:
         return None
-    token = matches[-1].replace(",", "")
+    token = matches[-1].replace(",", "").replace("$", "").strip()
     if token.endswith("%"):
-        return float(token[:-1]) / 100.0
+        return float(token[:-1])
     return float(token)
 
 
@@ -94,7 +94,7 @@ def score_numeric_relaxed_accuracy(prediction: str, answers: list[str]) -> float
     return 0.0
 
 
-def _coerce_options(metadata: dict | None, prediction: str = "") -> list[str]:
+def _coerce_options(metadata: dict | None) -> list[str]:
     metadata = metadata or {}
     raw = metadata.get("options")
     if raw is None:
@@ -108,14 +108,7 @@ def _coerce_options(metadata: dict | None, prediction: str = "") -> list[str]:
                 return [str(item) for item in parsed]
         except (ValueError, SyntaxError):
             pass
-
-    options: list[str] = []
-    for line in prediction.splitlines():
-        line = line.strip()
-        match = re.match(r"^[A-G][\.\)]\s+(.*)$", line)
-        if match:
-            options.append(match.group(1).strip())
-    return options
+    return []
 
 
 def _extract_option_letter(prediction: str) -> str | None:
@@ -123,24 +116,23 @@ def _extract_option_letter(prediction: str) -> str | None:
     if final_matches:
         return final_matches[-1].upper()
 
+    stripped = prediction.strip()
+    exact_match = re.fullmatch(r"[\(\[]?\s*([A-G])\s*[\)\].:]?\s*$", stripped, flags=re.IGNORECASE)
+    if exact_match:
+        return exact_match.group(1).upper()
+
     line_matches = re.findall(r"^[\-\*\s]*([A-G])[\.\)]\s", prediction, flags=re.IGNORECASE | re.MULTILINE)
     if line_matches:
         return line_matches[-1].upper()
-
-    all_matches = _OPTION_RE.findall(prediction)
-    if all_matches:
-        return all_matches[-1].upper()
     return None
 
 
 def _match_option_text(prediction: str, options: list[str]) -> str | None:
     normalized_prediction = normalize_text(prediction)
-    matches: list[str] = []
     for index, option in enumerate(options):
-        if normalize_text(option) and normalize_text(option) in normalized_prediction:
-            matches.append(chr(65 + index))
-    if len(matches) == 1:
-        return matches[0]
+        normalized_option = normalize_text(option)
+        if normalized_option and normalized_prediction == normalized_option:
+            return chr(65 + index)
     return None
 
 
@@ -155,7 +147,7 @@ def score_ai2d_option_match(prediction: str, answers: list[str], metadata: dict 
 
     correct_letter = chr(65 + answer_index)
     correct_option = options[answer_index] if 0 <= answer_index < len(options) else None
-    predicted_letter = _extract_option_letter(prediction)
+    predicted_letter = _extract_option_letter(prediction) or _match_option_text(prediction, options)
     if predicted_letter == correct_letter:
         return 1.0
     if correct_option and normalize_text(correct_option) in normalize_text(prediction):
@@ -189,15 +181,26 @@ def score_mathvista_match(prediction: str, answers: list[str], metadata: dict | 
     options = _coerce_options(metadata)
 
     if options or "multi" in question_type:
-        predicted_letter = _extract_option_letter(prediction) or _match_option_text(prediction, options)
-        if predicted_letter and options:
-            index = ord(predicted_letter) - 65
-            if 0 <= index < len(options):
-                predicted_option = options[index]
-                if any(normalize_text(predicted_option) == normalize_text(answer) for answer in answers):
-                    return 1.0
-        if any(normalize_text(answer) in normalize_text(prediction) for answer in answers):
+        correct_letters: set[str] = set()
+        normalized_answers = {normalize_text(answer) for answer in answers}
+        for answer in answers:
+            normalized = normalize_text(answer).upper()
+            if re.fullmatch(r"[A-G]", normalized):
+                correct_letters.add(normalized)
+        for index, option in enumerate(options):
+            if normalize_text(option) in normalized_answers:
+                correct_letters.add(chr(65 + index))
+
+        predicted_letter = _extract_option_letter(prediction)
+        if predicted_letter is None:
+            predicted_letter = _match_option_text(prediction, options)
+        if predicted_letter and predicted_letter in correct_letters:
             return 1.0
+
+        normalized_prediction = normalize_text(prediction)
+        for index, option in enumerate(options):
+            if normalized_prediction == normalize_text(option) and chr(65 + index) in correct_letters:
+                return 1.0
         return 0.0
 
     if answer_type in {"float", "integer"}:

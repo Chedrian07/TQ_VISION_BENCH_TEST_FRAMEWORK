@@ -76,11 +76,20 @@ class BackendClient:
         while True:
             try:
                 return self._stream_once(payload)
-            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 attempt += 1
-                if attempt > self.settings.max_retries:
+                if attempt > self.settings.max_retries or not self._is_retryable_exception(exc):
                     raise exc
                 time.sleep(0.5 * (2 ** (attempt - 1)))
+
+    @staticmethod
+    def _is_retryable_exception(exc: Exception) -> bool:
+        if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = exc.response.status_code
+            return status_code >= 500 or status_code == 429
+        return False
 
     def _stream_once(self, payload: dict[str, Any]) -> dict[str, Any]:
         t_request_start = time.perf_counter()

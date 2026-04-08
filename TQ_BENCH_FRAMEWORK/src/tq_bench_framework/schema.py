@@ -138,6 +138,7 @@ class RunMetadata:
     num_limit: int | None
     seed: int
     sampling_profile_mode: str
+    resumed_from_run_id: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         payload = asdict(self)

@@ -60,6 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--no-mlx", action="store_true")
     run_parser.add_argument("--no-turboquant", action="store_true")
     run_parser.add_argument("--no-resume", action="store_true")
+    run_parser.add_argument("--resume-run-id", default=None, help="Resume into an existing run id under results/runs/<run_id>")
     run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--log-level", default="INFO")
@@ -126,6 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         turboquant_bits=_parse_bits_list(args.turboquant_bits),
         max_output_tokens_override=args.max_output_tokens,
         dry_run=args.dry_run,
+        resume_run_id=args.resume_run_id,
     )
     return execute_run(options)
 

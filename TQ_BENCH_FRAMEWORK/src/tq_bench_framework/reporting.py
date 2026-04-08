@@ -23,21 +23,27 @@ class SummaryAccumulator:
     ttft_sum: float = 0.0
     ttft_count: int = 0
     total_latency_sum: float = 0.0
+    total_latency_count: int = 0
     decode_tps_sum: float = 0.0
     decode_tps_count: int = 0
     prompt_tokens_sum: int = 0
+    prompt_tokens_count: int = 0
     output_tokens_sum: int = 0
+    output_tokens_count: int = 0
 
     def update(self, result: SampleResult) -> None:
         self.count += 1
-        self.total_latency_sum += result.total_latency_ms
-        self.prompt_tokens_sum += result.prompt_tokens
-        self.output_tokens_sum += result.output_tokens
         if result.error:
             self.error_count += 1
             return
         self.scored_count += 1
         self.score_sum += result.score
+        self.total_latency_sum += result.total_latency_ms
+        self.total_latency_count += 1
+        self.prompt_tokens_sum += result.prompt_tokens
+        self.prompt_tokens_count += 1
+        self.output_tokens_sum += result.output_tokens
+        self.output_tokens_count += 1
         if result.ttft_ms is not None:
             self.ttft_sum += result.ttft_ms
             self.ttft_count += 1
@@ -53,10 +59,14 @@ class RunLogger:
         results_root: Path,
         reports_root: Path,
         run_name: str | None,
+        resume_run_id: str | None = None,
     ):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix = f"_{run_name}" if run_name else ""
-        run_id = f"{timestamp}{suffix}"
+        if resume_run_id is not None:
+            run_id = resume_run_id
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suffix = f"_{run_name}" if run_name else ""
+            run_id = f"{timestamp}{suffix}"
         self.run_id = run_id
         self.run_dir = results_root / "runs" / run_id
         self.raw_dir = self.run_dir / "raw"
@@ -74,7 +84,35 @@ class RunLogger:
 
         self.events_path = self.logs_dir / "events.jsonl"
         self.summary_csv_path = self.aggregate_dir / "summary.csv"
-        self.summary_rows: list[CellSummary] = []
+        self.summary_rows: list[CellSummary] = self._load_existing_summaries()
+
+    def _load_existing_summaries(self) -> list[CellSummary]:
+        if not self.summary_csv_path.exists():
+            return []
+        rows: list[CellSummary] = []
+        with self.summary_csv_path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                rows.append(
+                    CellSummary(
+                        benchmark_id=row["benchmark_id"],
+                        benchmark_title=row["benchmark_title"],
+                        runtime_label=row["runtime_label"],
+                        quant_scheme=row["quant_scheme"],
+                        quant_bits=float(row["quant_bits"]) if row["quant_bits"] not in ("", "None") else None,
+                        sampling_profile=row["sampling_profile"],
+                        metric=row["metric"],
+                        num_samples=int(row["num_samples"]),
+                        num_scored=int(row["num_scored"]),
+                        num_errors=int(row["num_errors"]),
+                        mean_score=float(row["mean_score"]),
+                        mean_ttft_ms=float(row["mean_ttft_ms"]) if row["mean_ttft_ms"] not in ("", "None") else None,
+                        mean_total_latency_ms=float(row["mean_total_latency_ms"]),
+                        mean_decode_tps=float(row["mean_decode_tps"]) if row["mean_decode_tps"] not in ("", "None") else None,
+                        mean_prompt_tokens=float(row["mean_prompt_tokens"]),
+                        mean_output_tokens=float(row["mean_output_tokens"]),
+                    )
+                )
+        return rows
 
     def write_run_metadata(self, metadata: RunMetadata) -> None:
         path = self.run_dir / "run.json"
@@ -96,23 +134,44 @@ class RunLogger:
         if not path.exists():
             return set()
         completed: set[str] = set()
+        for row in self.load_sample_results(path):
+            if row.sample_id:
+                completed.add(str(row.sample_id))
+        return completed
+
+    def load_sample_results(self, path: Path) -> list[SampleResult]:
+        if not path.exists():
+            return []
+        rows: list[SampleResult] = []
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
                     continue
                 row = json.loads(line)
-                sample_id = row.get("sample_id")
-                if sample_id:
-                    completed.add(str(sample_id))
-        return completed
+                rows.append(SampleResult(**row))
+        return rows
+
+    def restore_accumulator(self, path: Path) -> SummaryAccumulator:
+        accumulator = SummaryAccumulator()
+        for result in self.load_sample_results(path):
+            accumulator.update(result)
+        return accumulator
 
     def append_sample_result(self, path: Path, result: SampleResult) -> None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(result.to_json(), ensure_ascii=False) + "\n")
 
     def append_cell_summary(self, summary: CellSummary) -> None:
-        self.summary_rows.append(summary)
+        key = (summary.benchmark_id, summary.runtime_label)
+        replaced = False
+        for index, row in enumerate(self.summary_rows):
+            if (row.benchmark_id, row.runtime_label) == key:
+                self.summary_rows[index] = summary
+                replaced = True
+                break
+        if not replaced:
+            self.summary_rows.append(summary)
         rows = [item.to_csv_row() for item in self.summary_rows]
         if not rows:
             return
@@ -178,16 +237,16 @@ def finalize_cell_summary(
         mean_ttft_ms=(accumulator.ttft_sum / accumulator.ttft_count)
         if accumulator.ttft_count
         else None,
-        mean_total_latency_ms=(accumulator.total_latency_sum / accumulator.count)
-        if accumulator.count
+        mean_total_latency_ms=(accumulator.total_latency_sum / accumulator.total_latency_count)
+        if accumulator.total_latency_count
         else 0.0,
         mean_decode_tps=(accumulator.decode_tps_sum / accumulator.decode_tps_count)
         if accumulator.decode_tps_count
         else None,
-        mean_prompt_tokens=(accumulator.prompt_tokens_sum / accumulator.count)
-        if accumulator.count
+        mean_prompt_tokens=(accumulator.prompt_tokens_sum / accumulator.prompt_tokens_count)
+        if accumulator.prompt_tokens_count
         else 0.0,
-        mean_output_tokens=(accumulator.output_tokens_sum / accumulator.count)
-        if accumulator.count
+        mean_output_tokens=(accumulator.output_tokens_sum / accumulator.output_tokens_count)
+        if accumulator.output_tokens_count
         else 0.0,
     )
