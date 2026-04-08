@@ -569,7 +569,14 @@ async def stream_sse(
 
     try:
         async for result in run_generation(RUNTIME, messages, params):
-            delta = result.new_text or result.text or ""
+            # Use ``new_text`` strictly. The previous fallback
+            # ``result.new_text or result.text`` was buggy: on the final
+            # finished event omlx emits ``new_text=""`` (nothing new)
+            # while ``text`` holds the full cumulative output, which made
+            # the last iteration append the complete text a second time
+            # (e.g. "AfricaAfrica", "397397"). ``new_text`` alone is the
+            # correct per-tick delta.
+            delta = result.new_text or ""
             last_result = result
             if delta:
                 full_text_parts.append(delta)
