@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import math
 import re
 
@@ -69,28 +70,45 @@ def score_anls(prediction: str, answers: list[str]) -> float:
     return best
 
 
-def _parse_number(text: str) -> float | None:
+def _parse_number_variants(text: str) -> list[float]:
     matches = _NUMBER_RE.findall(text)
     if not matches:
-        return None
+        return []
     token = matches[-1].replace(",", "").replace("$", "").strip()
+    variants: list[float] = []
     if token.endswith("%"):
-        return float(token[:-1])
-    return float(token)
+        value = float(token[:-1])
+        variants.append(value)
+        variants.append(value / 100.0)
+        return variants
+    variants.append(float(token))
+    return variants
+
+
+def _parse_number(text: str) -> float | None:
+    variants = _parse_number_variants(text)
+    return variants[-1] if variants else None
 
 
 def score_numeric_relaxed_accuracy(prediction: str, answers: list[str]) -> float:
-    prediction_number = _parse_number(prediction)
-    if prediction_number is None:
+    prediction_numbers = _parse_number_variants(prediction)
+    if not prediction_numbers:
         return score_exact_match(prediction, answers)
 
     for answer in answers:
-        answer_number = _parse_number(answer)
-        if answer_number is None:
+        answer_numbers = _parse_number_variants(answer)
+        if not answer_numbers:
             continue
-        tolerance = 0.05 * max(abs(answer_number), 1.0)
-        if math.isclose(prediction_number, answer_number, rel_tol=0.0, abs_tol=tolerance):
-            return 1.0
+        for prediction_number in prediction_numbers:
+            for answer_number in answer_numbers:
+                tolerance = 0.05 * max(abs(answer_number), 1.0)
+                if math.isclose(
+                    prediction_number,
+                    answer_number,
+                    rel_tol=0.0,
+                    abs_tol=tolerance,
+                ):
+                    return 1.0
     return 0.0
 
 
@@ -107,7 +125,12 @@ def _coerce_options(metadata: dict | None) -> list[str]:
             if isinstance(parsed, list):
                 return [str(item) for item in parsed]
         except (ValueError, SyntaxError):
-            pass
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+            except json.JSONDecodeError:
+                pass
     return []
 
 
@@ -150,7 +173,7 @@ def score_ai2d_option_match(prediction: str, answers: list[str], metadata: dict 
     predicted_letter = _extract_option_letter(prediction) or _match_option_text(prediction, options)
     if predicted_letter == correct_letter:
         return 1.0
-    if correct_option and normalize_text(correct_option) in normalize_text(prediction):
+    if correct_option and normalize_text(prediction) == normalize_text(correct_option):
         return 1.0
     if normalize_text(prediction) == normalize_text(str(answer_index)):
         return 1.0
@@ -204,19 +227,32 @@ def score_mathvista_match(prediction: str, answers: list[str], metadata: dict | 
         return 0.0
 
     if answer_type in {"float", "integer"}:
-        prediction_number = _parse_number(prediction)
-        if prediction_number is None:
+        prediction_numbers = _parse_number_variants(prediction)
+        if not prediction_numbers:
             return 0.0
         for answer in answers:
-            answer_number = _parse_number(answer)
-            if answer_number is None:
+            answer_numbers = _parse_number_variants(answer)
+            if not answer_numbers:
                 continue
-            if answer_type == "integer":
-                return 1.0 if int(round(prediction_number)) == int(round(answer_number)) else 0.0
-            precision = metadata.get("precision")
-            tolerance = 10 ** (-int(precision)) if precision not in (None, "", "None") else 1e-3
-            if math.isclose(prediction_number, answer_number, rel_tol=0.0, abs_tol=tolerance):
-                return 1.0
+            for prediction_number in prediction_numbers:
+                for answer_number in answer_numbers:
+                    if answer_type == "integer":
+                        if int(round(prediction_number)) == int(round(answer_number)):
+                            return 1.0
+                        continue
+                    precision = metadata.get("precision")
+                    tolerance = (
+                        10 ** (-int(precision))
+                        if precision not in (None, "", "None")
+                        else 1e-3
+                    )
+                    if math.isclose(
+                        prediction_number,
+                        answer_number,
+                        rel_tol=0.0,
+                        abs_tol=tolerance,
+                    ):
+                        return 1.0
         return 0.0
 
     return score_exact_match(prediction, answers)

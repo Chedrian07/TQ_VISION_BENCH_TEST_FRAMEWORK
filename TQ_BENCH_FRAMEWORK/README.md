@@ -149,6 +149,10 @@ Notes:
 
 ## Known limitations
 
-- metric은 현재 lightweight local matcher 기준이다. official evaluator와 100% 일치하도록 추가 보정이 필요할 수 있다.
+- metric은 현재 lightweight local matcher 기준이다. official evaluator와 100% 일치하지 않을 수 있다.
+- `TextVQA`는 official VQA soft accuracy가 아니라 exact-match 계열 내부 비교 점수를 사용한다.
+- `OCRBench v2`도 official mixed metric이 아니라 내부 exact-match proxy를 사용한다.
+- `DocVQA`의 `ANLS`는 내부 normalize 정책을 사용하므로 공식 리더보드 수치와 직접 비교하면 안 된다.
+- percentage 값은 내부적으로 `45%`와 `0.45`를 모두 후보로 해석해 매칭한다.
 - `MMMU`는 config를 모두 순회해 단일 JSONL로 합치므로 준비 시간이 길다.
 - prepared datasets와 benchmark run artifacts는 로컬 산출물이며 Git에 포함되지 않는다.

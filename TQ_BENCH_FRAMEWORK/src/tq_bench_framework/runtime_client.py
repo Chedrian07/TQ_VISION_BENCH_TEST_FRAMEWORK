@@ -86,6 +86,8 @@ class BackendClient:
     def _is_retryable_exception(exc: Exception) -> bool:
         if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
             return True
+        if isinstance(exc, json.JSONDecodeError):
+            return True
         if isinstance(exc, httpx.HTTPStatusError):
             status_code = exc.response.status_code
             return status_code >= 500 or status_code == 429

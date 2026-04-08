@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -83,6 +83,7 @@ class RunLogger:
             directory.mkdir(parents=True, exist_ok=True)
 
         self.events_path = self.logs_dir / "events.jsonl"
+        self.metadata_updates_path = self.logs_dir / "run_metadata_updates.jsonl"
         self.summary_csv_path = self.aggregate_dir / "summary.csv"
         self.summary_rows: list[CellSummary] = self._load_existing_summaries()
 
@@ -116,7 +117,23 @@ class RunLogger:
 
     def write_run_metadata(self, metadata: RunMetadata) -> None:
         path = self.run_dir / "run.json"
-        path.write_text(json.dumps(metadata.to_json(), indent=2, ensure_ascii=False))
+        serialized = metadata.to_json()
+        if not path.exists():
+            path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False))
+            return
+
+        existing = self.load_run_metadata()
+        if existing == serialized:
+            return
+
+        with self.metadata_updates_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(serialized, ensure_ascii=False) + "\n")
+
+    def load_run_metadata(self) -> dict[str, Any] | None:
+        path = self.run_dir / "run.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def record_event(self, event_type: str, payload: dict[str, Any]) -> None:
         row = {
@@ -143,13 +160,31 @@ class RunLogger:
         if not path.exists():
             return []
         rows: list[SampleResult] = []
+        sample_fields = {field.name: field for field in fields(SampleResult)}
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
                     continue
                 row = json.loads(line)
-                rows.append(SampleResult(**row))
+                normalized: dict[str, Any] = {}
+                skip_row = False
+                for name, field in sample_fields.items():
+                    if name in row:
+                        normalized[name] = row[name]
+                        continue
+                    if field.default is not MISSING:
+                        normalized[name] = field.default
+                        continue
+                    if field.default_factory is not MISSING:  # type: ignore[comparison-overlap]
+                        normalized[name] = field.default_factory()  # type: ignore[misc]
+                        continue
+                    log.warning("Skipping incompatible raw sample row missing required field '%s': %s", name, row)
+                    skip_row = True
+                    break
+                if skip_row:
+                    continue
+                rows.append(SampleResult(**normalized))
         return rows
 
     def restore_accumulator(self, path: Path) -> SummaryAccumulator:

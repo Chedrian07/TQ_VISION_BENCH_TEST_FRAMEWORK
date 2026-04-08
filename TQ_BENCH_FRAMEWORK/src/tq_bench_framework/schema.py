@@ -139,6 +139,9 @@ class RunMetadata:
     seed: int
     sampling_profile_mode: str
     resumed_from_run_id: str | None = None
+    model: str | None = None
+    revision: str | None = None
+    adapter_path: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         payload = asdict(self)

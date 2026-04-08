@@ -128,7 +128,13 @@ def build_runtime_matrix(options: RunOptions, manifests: Iterable[BenchmarkManif
 def build_prompt(manifest: BenchmarkManifest, question: str, metadata: dict) -> str:
     try:
         return manifest.prompt_template.format(question=question, **metadata)
-    except KeyError:
+    except (KeyError, IndexError, ValueError) as exc:
+        log.warning(
+            "Prompt template formatting failed for benchmark=%s with metadata keys=%s: %s",
+            manifest.id,
+            sorted(metadata.keys()),
+            exc,
+        )
         return question
 
 
@@ -150,6 +156,7 @@ def execute_run(options: RunOptions) -> int:
         run_name=options.run_name,
         resume_run_id=options.resume_run_id,
     )
+    existing_metadata = logger.load_run_metadata()
     run_metadata = RunMetadata(
         run_id=logger.run_id,
         run_dir=logger.run_dir,
@@ -159,7 +166,33 @@ def execute_run(options: RunOptions) -> int:
         seed=options.seed,
         sampling_profile_mode=options.sampling_profile_mode,
         resumed_from_run_id=options.resume_run_id,
+        model=options.model,
+        revision=options.revision,
+        adapter_path=options.adapter_path,
     )
+    if options.resume_run_id is not None and existing_metadata is not None:
+        guards = {
+            "selected_benchmarks": selected_ids,
+            "runtime_matrix": [config.label for config in runtime_matrix],
+            "num_limit": options.num_limit,
+            "seed": options.seed,
+            "sampling_profile_mode": options.sampling_profile_mode,
+            "model": options.model,
+            "revision": options.revision,
+            "adapter_path": options.adapter_path,
+        }
+        mismatches: list[str] = []
+        for key, value in guards.items():
+            if existing_metadata.get(key) != value:
+                mismatches.append(
+                    f"{key}: existing={existing_metadata.get(key)!r} current={value!r}"
+                )
+        if mismatches:
+            joined = "; ".join(mismatches)
+            raise ValueError(
+                "Resume parameters do not match the original run. "
+                f"Refusing to resume: {joined}"
+            )
     logger.write_run_metadata(run_metadata)
 
     if options.dry_run:
