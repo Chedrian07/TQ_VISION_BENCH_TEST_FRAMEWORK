@@ -194,36 +194,46 @@ def _extract_images(record: dict[str, Any], source: DatasetSourceSpec) -> list[A
     return images
 
 
+_PNG_COMPATIBLE_MODES = {"1", "L", "LA", "I", "P", "RGB", "RGBA"}
+
+
+def _save_png(image: Image.Image, output_path: Path) -> None:
+    if image.mode not in _PNG_COMPATIBLE_MODES:
+        target_mode = "RGBA" if "A" in image.getbands() else "RGB"
+        image = image.convert(target_mode)
+    image.save(output_path)
+
+
 def _save_image(image_value: Any, output_dir: Path, stem: str, image_index: int) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{stem}_{image_index}.png"
 
     if isinstance(image_value, Image.Image):
-        image_value.save(output_path)
+        _save_png(image_value, output_path)
         return str(output_path.resolve())
 
     if isinstance(image_value, dict):
         if image_value.get("bytes") is not None:
             image = Image.open(BytesIO(image_value["bytes"]))
-            image.save(output_path)
+            _save_png(image, output_path)
             return str(output_path.resolve())
         if image_value.get("path"):
             path = Path(str(image_value["path"]))
             if path.exists():
                 image = Image.open(path)
-                image.save(output_path)
+                _save_png(image, output_path)
                 return str(output_path.resolve())
 
     if isinstance(image_value, (bytes, bytearray)):
         image = Image.open(BytesIO(image_value))
-        image.save(output_path)
+        _save_png(image, output_path)
         return str(output_path.resolve())
 
     if isinstance(image_value, str):
         path = Path(image_value)
         if path.exists():
             image = Image.open(path)
-            image.save(output_path)
+            _save_png(image, output_path)
             return str(output_path.resolve())
 
     raise DatasetPreparationError(f"Unsupported image payload type: {type(image_value).__name__}")
