@@ -1,17 +1,14 @@
 [project]
 name = "tq-vlm-bench"
 version = "0.1.0"
-description = "TurboQuant KV cache quantization benchmark for VLMs (mlx-vlm)"
+description = "TurboQuant KV cache quantization benchmark for VLMs (oMLX compatibility layer)"
 requires-python = ">=3.12"
 
 dependencies = [
-    # mlx-vlm 0.4.4 + Blaizzy/mlx-vlm#967 (TurboQuant fast-quantize race fix).
-    # The fused fast-path Metal kernels in 0.4.4 race on `packed_shared[w] |=`
-    # so generated tokens at higher bit-widths come out word-zeroed and 4-bit
-    # ends up *worse* than 2-bit. Fix is uploaded to a fork branch; revert to
-    # `mlx-vlm>=0.4.5` (or whichever release contains the fix) once the PR
-    # is merged. Also update CLAUDE.md rule #24 at the same time.
-    "mlx-vlm @ git+https://github.com/Chedrian07/mlx-vlm.git@fix/turboquant-fast-quantize-pack-race",
+    # oMLX compatibility branch pinned to the upstream PR #675 dependency set.
+    # This provides `omlx.compat.vlm`, which wraps the validated mlx-vlm /
+    # mlx-lm revisions behind a stable import target for this benchmark stack.
+    "omlx @ git+https://github.com/Chedrian07/omlx.git@omlx_ver",
     # mlx backend split by platform:
     #   - macOS (Apple Silicon): plain `mlx` auto-pulls `mlx-metal` via its own metadata
     #   - Linux (WSL2 / x86_64 + NVIDIA): the `cuda13` extra pulls `mlx-cuda-13`
@@ -29,8 +26,9 @@ dependencies = [
 
     # /v1/responses OpenAI-compatible serving layer (see serve.py).
     # fastapi/starlette/uvicorn/pydantic are already pulled transitively
-    # by mlx-vlm (it ships its own server.py), but we declare them
-    # explicitly so that `uv sync` without mlx-vlm's extras still works.
+    # by omlx, but we declare them
+    # explicitly so that the benchmark env remains stable even if omlx's
+    # transitive serving stack changes later.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.6",

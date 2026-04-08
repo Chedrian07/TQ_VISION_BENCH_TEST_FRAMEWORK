@@ -1,5 +1,5 @@
 """
-OpenAI Responses API server on top of `mlx_vlm`.
+OpenAI Responses API server on top of `omlx.compat.vlm`.
 
 This backend is benchmark-oriented:
 
@@ -37,11 +37,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mlx_lm.sample_utils import make_presence_penalty
 from pydantic import BaseModel, Field
 
-from mlx_vlm import load
-from mlx_vlm.generate import maybe_quantize_kv_cache as quantize_prompt_cache
-from mlx_vlm.generate import stream_generate
-from mlx_vlm.models import cache as vlm_cache
-from mlx_vlm.prompt_utils import apply_chat_template
+from omlx.compat.vlm import (
+    apply_chat_template,
+    load,
+    make_prompt_cache,
+    quantize_prompt_cache,
+    stream_generate,
+)
 
 try:
     SETTINGS = load_settings()
@@ -106,6 +108,7 @@ class Runtime:
             },
             "kv_cache": {
                 "scheme": self.settings.kv_quant_scheme,
+                "omlx_scheme": self.settings.active_kv_quant_scheme,
                 "mlx_vlm_scheme": self.settings.active_kv_quant_scheme,
                 "bits": self.settings.kv_bits,
                 "group_size": self.settings.kv_group_size,
@@ -147,7 +150,7 @@ class Runtime:
             revision=self.settings.revision,
             trust_remote_code=self.settings.trust_remote_code,
         )
-        num_cache_layers = len(vlm_cache.make_prompt_cache(model.language_model))
+        num_cache_layers = len(make_prompt_cache(model.language_model))
         log.info(
             "Model loaded. language_model has %d KV-cache slots.",
             num_cache_layers,
@@ -198,7 +201,7 @@ class Runtime:
         if self.model is None or self.settings.kv_bits is None:
             raise RuntimeError("TurboQuant cache requested before runtime was initialized.")
 
-        prompt_cache = vlm_cache.make_prompt_cache(self.model.language_model)
+        prompt_cache = make_prompt_cache(self.model.language_model)
         quantize_prompt_cache(
             prompt_cache,
             quantized_kv_start=0,
@@ -715,7 +718,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="TQ MLX-VLM Responses API", lifespan=lifespan)
+app = FastAPI(title="TQ oMLX Responses API", lifespan=lifespan)
 
 
 @app.get("/healthz")
@@ -764,7 +767,7 @@ async def list_models(request: Request) -> dict[str, Any]:
                 "id": RUNTIME.settings.model_id,
                 "object": "model",
                 "created": _now(),
-                "owned_by": "mlx-vlm",
+                "owned_by": "omlx",
             }
         ],
     }

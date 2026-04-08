@@ -1,6 +1,6 @@
 # TQ Backend
 
-`TQ_BACKEND`는 `mlx_vlm` 기반의 OpenAI-compatible inference backend다.
+`TQ_BACKEND`는 `omlx.compat.vlm` 기반의 OpenAI-compatible inference backend다.
 
 이 backend는 단순 서빙 서버가 아니라 benchmark control plane 역할을 한다.
 

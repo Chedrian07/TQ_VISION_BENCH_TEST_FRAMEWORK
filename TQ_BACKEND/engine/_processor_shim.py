@@ -38,7 +38,7 @@ What the shim does
 Both patches are idempotent and safe to call multiple times.
 
 Call `install_no_video_processor_shim()` exactly once **before**
-`mlx_vlm.load(...)` runs (which transitively calls
+`omlx.compat.vlm.load(...)` runs (which transitively calls
 `AutoProcessor.from_pretrained`).
 """
 
