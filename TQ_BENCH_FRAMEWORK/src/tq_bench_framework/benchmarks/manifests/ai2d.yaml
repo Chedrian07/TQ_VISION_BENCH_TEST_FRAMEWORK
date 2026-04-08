@@ -4,10 +4,10 @@ stage: core
 description: Diagram understanding benchmark for structural visual reasoning.
 data_file_env: AI2D_DATASET_FILE
 adapter: unified_jsonl_vqa
-metric: normalized_exact_match
+metric: ai2d_option_match
 default_sampling_profile: controlled
 best_effort_sampling_profile: best_effort_general
-max_output_tokens: 48
+max_output_tokens: 16
 prompt_template: "{question}"
-system_prompt: "Answer the diagram question directly and briefly."
+system_prompt: "Choose exactly one option. Return only the option letter, such as A, B, C, or D."
 notes: "Primary structure/diagram benchmark."

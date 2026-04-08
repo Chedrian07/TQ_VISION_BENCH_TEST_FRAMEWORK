@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ast
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -172,7 +173,16 @@ def _extract_question(record: dict[str, Any], source: DatasetSourceSpec) -> str:
                     f"{chr(65 + index)}. {value}" for index, value in enumerate(raw_options)
                 )
         elif isinstance(raw_options, str):
-            options_text = raw_options
+            try:
+                parsed = ast.literal_eval(raw_options)
+                if isinstance(parsed, list):
+                    options_text = "\n".join(
+                        f"{chr(65 + index)}. {value}" for index, value in enumerate(parsed)
+                    )
+                else:
+                    options_text = raw_options
+            except (ValueError, SyntaxError):
+                options_text = raw_options
         if options_text:
             question = f"{question}\nOptions:\n{options_text}".strip()
 
@@ -304,6 +314,16 @@ def prepare_dataset(
                         source.id_field,
                     }
                 }
+                if source.options_field and record.get(source.options_field) is not None:
+                    raw_options = record[source.options_field]
+                    if isinstance(raw_options, list):
+                        metadata["options"] = raw_options
+                    elif isinstance(raw_options, str):
+                        try:
+                            parsed = ast.literal_eval(raw_options)
+                            metadata["options"] = parsed if isinstance(parsed, list) else raw_options
+                        except (ValueError, SyntaxError):
+                            metadata["options"] = raw_options
                 if config_name is not None:
                     metadata["hf_config"] = config_name
 

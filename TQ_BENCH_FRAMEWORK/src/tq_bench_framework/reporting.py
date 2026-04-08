@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from tq_bench_framework.analysis import generate_analysis_artifacts
 from tq_bench_framework.schema import CellSummary, RunMetadata, SampleResult
 
 log = logging.getLogger("tq-bench")
@@ -144,6 +145,9 @@ class RunLogger:
                 )
             )
         (self.report_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+
+    def finalize_reports(self) -> None:
+        generate_analysis_artifacts(self.summary_csv_path, self.report_dir)
 
 
 def finalize_cell_summary(

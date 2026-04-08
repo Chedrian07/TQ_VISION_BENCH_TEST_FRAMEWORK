@@ -181,6 +181,7 @@ def execute_run(options: RunOptions) -> int:
 
         for _, grouped_jobs in runtime_groups.items():
             runtime = grouped_jobs[0][1]
+            log.info("Reloading backend runtime: %s", runtime.label)
             logger.record_event("runtime_reload_start", {"runtime": runtime.reload_payload()})
             reload_payload = client.reload_runtime(runtime)
             logger.record_event("runtime_reload_done", reload_payload)
@@ -209,6 +210,13 @@ def execute_run(options: RunOptions) -> int:
                         "dataset_file": str(dataset_file),
                     },
                 )
+                log.info(
+                    "Running benchmark=%s runtime=%s dataset=%s num_limit=%s",
+                    manifest.id,
+                    cell_runtime.label,
+                    dataset_file,
+                    options.num_limit,
+                )
 
                 for sample in samples:
                     if sample.sample_id in completed_ids:
@@ -225,7 +233,12 @@ def execute_run(options: RunOptions) -> int:
                             system_prompt=manifest.system_prompt,
                         )
                         prediction = str(inference["output_text"]).strip()
-                        score = score_prediction(manifest.metric, prediction, sample.answers)
+                        score = score_prediction(
+                            manifest.metric,
+                            prediction,
+                            sample.answers,
+                            sample.metadata,
+                        )
                         result = SampleResult(
                             run_id=logger.run_id,
                             benchmark_id=manifest.id,
@@ -293,6 +306,14 @@ def execute_run(options: RunOptions) -> int:
                     accumulator=accumulator,
                 )
                 logger.append_cell_summary(summary)
+                log.info(
+                    "Completed benchmark=%s runtime=%s score=%.4f errors=%d samples=%d",
+                    manifest.id,
+                    cell_runtime.label,
+                    summary.mean_score,
+                    summary.num_errors,
+                    summary.num_samples,
+                )
                 logger.record_event(
                     "cell_done",
                     {
@@ -301,6 +322,7 @@ def execute_run(options: RunOptions) -> int:
                         "summary": summary.to_csv_row(),
                     },
                 )
+        logger.finalize_reports()
         return 0
     finally:
         client.close()

@@ -476,7 +476,7 @@ def load_settings() -> ServerSettings:
         kv_quant_scheme=kv_quant_scheme,
         kv_bits=kv_bits,
         kv_group_size=_read_int("TQ_KV_GROUP_SIZE", 64, minimum=1),
-        quantized_kv_start=_read_int("TQ_QUANTIZED_KV_START", 5000, minimum=0),
+        quantized_kv_start=_read_int("TQ_QUANTIZED_KV_START", 0, minimum=0),
         turboquant_seed=_read_int("TQ_TURBOQUANT_SEED", 0),
         turboquant_from_first_token=_read_bool(
             "TQ_TURBOQUANT_FROM_FIRST_TOKEN", True
