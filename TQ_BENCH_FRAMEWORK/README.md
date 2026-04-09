@@ -48,6 +48,8 @@ Supported image fields:
 
 Relative image paths are resolved against the JSONL file directory.
 
+Text-only benchmarks may omit `image` / `images` entirely.
+
 ## Example
 
 ```bash
@@ -79,6 +81,35 @@ Relevant timeout knobs:
 - `TQ_BENCH_REQUEST_TIMEOUT_SECONDS` for inference requests
 - `TQ_BENCH_RELOAD_TIMEOUT_SECONDS` for backend runtime reload / state checks
 - `TQ_BENCH_CONNECT_TIMEOUT_SECONDS` for TCP connect timeout
+
+### LongBench text subset
+
+A deterministic 100-sample text-only benchmark derived from `THUDM/LongBench-v2`
+can be prepared with:
+
+```bash
+uv run python tools/prepare_longbench_text_100.py
+```
+
+This writes:
+
+- `datasets/processed/longbench_text_100/longbench_text_100.jsonl`
+
+The prepared benchmark intentionally truncates each source context to keep
+end-to-end KV-cache sweeps practical on local MLX hardware. It is meant for
+relative quantization comparisons, not official LongBench reporting.
+
+You can then point the manifest to it via:
+
+- `LONGBENCH_TEXT_100_DATASET_FILE=/abs/path/to/longbench_text_100.jsonl`
+
+or with a one-off override:
+
+```bash
+uv run tq-bench run \
+  --benchmarks longbench_text_100 \
+  --dataset-file longbench_text_100=/abs/path/to/longbench_text_100.jsonl
+```
 
 ## Commands
 

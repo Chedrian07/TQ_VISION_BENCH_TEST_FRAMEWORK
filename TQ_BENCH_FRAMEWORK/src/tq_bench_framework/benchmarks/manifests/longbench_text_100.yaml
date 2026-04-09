@@ -1,0 +1,26 @@
+id: longbench_text_100
+title: LongBench Text 100
+stage: diagnostic
+description: Text-only truncated long-context multiple-choice benchmark derived from LongBench-v2 for KV-cache validation.
+data_file_env: LONGBENCH_TEXT_100_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: mmmu_option_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 8
+prompt_template: |
+  Read the context carefully and answer the multiple-choice question.
+
+  Context:
+  {context}
+
+  Question:
+  {question}
+
+  Options:
+  A. {choice_A}
+  B. {choice_B}
+  C. {choice_C}
+  D. {choice_D}
+system_prompt: "Choose exactly one option and return only the option letter, such as A, B, C, or D. Do not explain."
+notes: "Deterministic 100-sample LongBench-v2-derived text benchmark with context truncation for practical KV-cache sweeps."
