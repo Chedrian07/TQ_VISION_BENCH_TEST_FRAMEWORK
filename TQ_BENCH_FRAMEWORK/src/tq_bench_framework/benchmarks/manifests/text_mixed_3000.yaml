@@ -1,0 +1,17 @@
+id: text_mixed_3000
+title: Text Mixed 3000
+stage: diagnostic
+description: Deterministic 3000-sample text-only multiple-choice suite mixed from several public benchmarks.
+data_file_env: TEXT_MIXED_3000_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: mmmu_option_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 8
+prompt_template: |
+  {question}
+
+  Options:
+  {choices_block}
+system_prompt: "Choose exactly one option and return only the option letter, such as A, B, C, or D. Do not explain."
+notes: "Mixed text-only suite built from MMLU, ARC, CommonsenseQA, and HellaSwag for larger-sample TurboQuant validation."

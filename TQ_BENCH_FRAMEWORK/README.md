@@ -115,6 +115,28 @@ This writes:
 The benchmark is intended as a larger-sample text-only KV-cache regression
 probe with short prompts and no images.
 
+### Mixed text-only suite
+
+A mixed 3000-sample text-only suite can be prepared with:
+
+```bash
+uv run python tools/prepare_text_mixed_3000.py
+```
+
+This writes:
+
+- `datasets/processed/text_mixed_3000/text_mixed_3000.jsonl`
+
+The suite mixes:
+
+- `cais/mmlu`
+- `allenai/ai2_arc` (`ARC-Challenge`, `ARC-Easy`)
+- `tau/commonsense_qa`
+- `Rowan/hellaswag`
+
+All tasks are normalized into a common multiple-choice format and scored with
+the same option-match metric for relative KV-cache comparisons.
+
 You can then point the manifest to it via:
 
 - `LONGBENCH_TEXT_100_DATASET_FILE=/abs/path/to/longbench_text_100.jsonl`
