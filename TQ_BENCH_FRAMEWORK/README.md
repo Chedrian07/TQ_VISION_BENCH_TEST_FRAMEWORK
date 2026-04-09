@@ -99,6 +99,22 @@ The prepared benchmark intentionally truncates each source context to keep
 end-to-end KV-cache sweeps practical on local MLX hardware. It is meant for
 relative quantization comparisons, not official LongBench reporting.
 
+### MMLU text subset
+
+A deterministic 1000-sample text-only multiple-choice benchmark can be prepared
+from `cais/mmlu` with:
+
+```bash
+uv run python tools/prepare_mmlu_text_1000.py
+```
+
+This writes:
+
+- `datasets/processed/mmlu_text_1000/mmlu_text_1000.jsonl`
+
+The benchmark is intended as a larger-sample text-only KV-cache regression
+probe with short prompts and no images.
+
 You can then point the manifest to it via:
 
 - `LONGBENCH_TEXT_100_DATASET_FILE=/abs/path/to/longbench_text_100.jsonl`
