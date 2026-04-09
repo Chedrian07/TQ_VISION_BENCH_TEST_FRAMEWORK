@@ -1165,7 +1165,7 @@ wheels = [
 [[package]]
 name = "omlx"
 version = "0.3.5.dev1"
-source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test#713f2f130255378c0b915749ae11ad8d50e14842" }
+source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test#bd1780608a2a15b34e9149c44dd03334deabb365" }
 dependencies = [
     { name = "fastapi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "huggingface-hub", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
