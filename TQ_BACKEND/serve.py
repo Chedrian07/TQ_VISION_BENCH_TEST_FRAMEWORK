@@ -139,9 +139,17 @@ class Runtime:
                     cache_dir, exc,
                 )
                 cache_dir = None
+        completion_batch_size = self.settings.max_concurrent_requests
+        # TurboQuant batch decode currently uses a conservative
+        # dequantize+SDPA path for correctness. Keeping decode batches
+        # smaller avoids large transient tensors that can trigger Metal
+        # command-buffer failures on long VLM prompts while still allowing
+        # 4 concurrent request slots at the API/runtime level.
+        if self.settings.kv_quant_scheme == "turboquant":
+            completion_batch_size = min(completion_batch_size, 2)
         return OMLXSchedulerConfig(
             max_num_seqs=self.settings.max_concurrent_requests,
-            completion_batch_size=self.settings.max_concurrent_requests,
+            completion_batch_size=completion_batch_size,
             prefill_step_size=self.settings.default_prefill_step_size,
             model_name=self.settings.model_id,
             cache_namespace=self.settings.cache_namespace,

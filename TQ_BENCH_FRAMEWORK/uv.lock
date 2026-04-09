@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1315,7 +1315,7 @@ wheels = [
 [[package]]
 name = "omlx"
 version = "0.3.5.dev1"
-source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test#bd1780608a2a15b34e9149c44dd03334deabb365" }
+source = { git = "https://github.com/Chedrian07/omlx.git?rev=omlx_ver_test#38f89b1f4696ef9a03ca5a232bec745a62478138" }
 dependencies = [
     { name = "fastapi" },
     { name = "huggingface-hub" },
