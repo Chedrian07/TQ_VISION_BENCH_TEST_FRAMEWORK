@@ -137,6 +137,22 @@ The suite mixes:
 All tasks are normalized into a common multiple-choice format and scored with
 the same option-match metric for relative KV-cache comparisons.
 
+### 3000-sample single-benchmark text suites
+
+The following larger text-only suites can also be prepared:
+
+```bash
+uv run python tools/prepare_mmlu_text_3000.py
+uv run python tools/prepare_commonsenseqa_text_3000.py
+uv run python tools/prepare_hellaswag_text_3000.py
+```
+
+They write:
+
+- `datasets/processed/mmlu_text_3000/mmlu_text_3000.jsonl`
+- `datasets/processed/commonsenseqa_text_3000/commonsenseqa_text_3000.jsonl`
+- `datasets/processed/hellaswag_text_3000/hellaswag_text_3000.jsonl`
+
 You can then point the manifest to it via:
 
 - `LONGBENCH_TEXT_100_DATASET_FILE=/abs/path/to/longbench_text_100.jsonl`

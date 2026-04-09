@@ -1,0 +1,20 @@
+id: hellaswag_text_3000
+title: HellaSwag Text 3000
+stage: diagnostic
+description: Deterministic 3000-sample text-only multiple-choice benchmark derived from Rowan/hellaswag.
+data_file_env: HELLASWAG_TEXT_3000_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: mmmu_option_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 8
+prompt_template: |
+  Complete the passage with the most plausible ending.
+
+  Prompt:
+  {question}
+
+  Options:
+  {choices_block}
+system_prompt: "Choose exactly one option and return only the option letter, such as A, B, C, or D. Do not explain."
+notes: "HellaSwag validation subset for text-only TurboQuant validation."

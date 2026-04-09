@@ -1,0 +1,23 @@
+id: mmlu_text_3000
+title: MMLU Text 3000
+stage: diagnostic
+description: Deterministic 3000-sample text-only multiple-choice benchmark derived from cais/mmlu.
+data_file_env: MMLU_TEXT_3000_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: mmmu_option_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 8
+prompt_template: |
+  Answer the multiple-choice question.
+
+  Question:
+  {question}
+
+  Options:
+  A. {choice_A}
+  B. {choice_B}
+  C. {choice_C}
+  D. {choice_D}
+system_prompt: "Choose exactly one option and return only the option letter, such as A, B, C, or D. Do not explain."
+notes: "Larger MMLU probe for TurboQuant regression checks."

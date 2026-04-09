@@ -1,0 +1,20 @@
+id: commonsenseqa_text_3000
+title: CommonsenseQA Text 3000
+stage: diagnostic
+description: Deterministic 3000-sample text-only multiple-choice benchmark derived from tau/commonsense_qa.
+data_file_env: COMMONSENSEQA_TEXT_3000_DATASET_FILE
+adapter: unified_jsonl_vqa
+metric: mmmu_option_match
+default_sampling_profile: controlled
+best_effort_sampling_profile: best_effort_reasoning
+max_output_tokens: 8
+prompt_template: |
+  Answer the commonsense multiple-choice question.
+
+  Question:
+  {question}
+
+  Options:
+  {choices_block}
+system_prompt: "Choose exactly one option and return only the option letter, such as A, B, C, or D. Do not explain."
+notes: "CommonsenseQA train subset for text-only TurboQuant validation."
